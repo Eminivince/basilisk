@@ -20,6 +20,9 @@ pub enum ProjectError {
         #[source]
         source: io::Error,
     },
+    /// A config file existed but couldn't be parsed.
+    #[error("failed to parse {path}: {detail}")]
+    ParseFailed { path: PathBuf, detail: String },
 }
 
 impl ProjectError {

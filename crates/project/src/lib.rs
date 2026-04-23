@@ -11,9 +11,14 @@
 //! source walking — later checkpoints layer those on.
 
 pub mod error;
+pub mod foundry;
 pub mod layout;
 
 pub use error::ProjectError;
+pub use foundry::{
+    parse_foundry_config, parse_foundry_toml, parse_remappings_str, parse_remappings_txt,
+    FoundryConfig, FoundryProfile, Remapping, DEFAULT_PROFILE,
+};
 pub use layout::{detect_layout, ConfigFile, ProjectLayout};
 
 // Convenience re-export so callers don't need a direct `basilisk-core`
