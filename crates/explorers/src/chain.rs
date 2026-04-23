@@ -23,7 +23,10 @@ use crate::{
     etherscan::Etherscan,
     source_explorer::SourceExplorer,
     sourcify::Sourcify,
-    types::{ExplorerAttempt, ExplorerOutcome, MatchQuality, ResolutionAttempt, VerifiedSource},
+    types::{
+        CreationInfo, ExplorerAttempt, ExplorerOutcome, MatchQuality, ResolutionAttempt,
+        VerifiedSource,
+    },
 };
 
 /// Cache namespace for verified-source payloads.
@@ -33,10 +36,16 @@ pub const HIT_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 /// TTL for a cached "not verified anywhere" entry.
 pub const MISS_TTL: Duration = Duration::from_secs(5 * 60);
 
+/// Cache namespace for creation-transaction lookups.
+pub const CREATION_NAMESPACE: &str = "creation";
+/// TTL for cached creation info — effectively indefinite (365 days).
+pub const CREATION_TTL: Duration = Duration::from_secs(365 * 24 * 60 * 60);
+
 /// Composed explorer chain.
 pub struct ExplorerChain {
     explorers: Vec<Arc<dyn SourceExplorer>>,
     cache: Option<Cache>,
+    creation_cache: Option<Cache>,
 }
 
 impl std::fmt::Debug for ExplorerChain {
@@ -45,6 +54,10 @@ impl std::fmt::Debug for ExplorerChain {
         f.debug_struct("ExplorerChain")
             .field("explorers", &names)
             .field("cache", &self.cache.as_ref().map(Cache::namespace))
+            .field(
+                "creation_cache",
+                &self.creation_cache.as_ref().map(Cache::namespace),
+            )
             .finish()
     }
 }
@@ -53,7 +66,12 @@ impl ExplorerChain {
     /// Build a chain from an explicit explorer list (order-sensitive).
     pub fn new(explorers: Vec<Arc<dyn SourceExplorer>>) -> Self {
         let cache = Cache::open(CACHE_NAMESPACE).ok();
-        Self { explorers, cache }
+        let creation_cache = Cache::open(CREATION_NAMESPACE).ok();
+        Self {
+            explorers,
+            cache,
+            creation_cache,
+        }
     }
 
     /// Build a chain that never reads from or writes to the cache.
@@ -63,6 +81,7 @@ impl ExplorerChain {
         Self {
             explorers,
             cache: None,
+            creation_cache: None,
         }
     }
 
@@ -190,6 +209,58 @@ impl ExplorerChain {
             attempts,
         }
     }
+
+    /// Walk the explorer list looking for creation-tx metadata. First
+    /// `Ok(Some(_))` wins; `Err(Unsupported)` is silently skipped; other
+    /// errors abort with the last observed error (best-effort fallback).
+    ///
+    /// Cached under namespace `"creation"` keyed by `{chain}:{address}`
+    /// with an indefinite TTL.
+    pub async fn resolve_creation(
+        &self,
+        chain: &Chain,
+        address: Address,
+    ) -> Result<Option<CreationInfo>, ExplorerError> {
+        let cache_key = format!("{}:{}", chain.canonical_name(), address);
+        if let Some(cache) = &self.creation_cache {
+            match cache.get::<Option<CreationInfo>>(&cache_key).await {
+                Ok(Some(hit)) => return Ok(hit.value),
+                Ok(None) => {}
+                Err(e) => tracing::warn!(error = %e, "creation cache read failed"),
+            }
+        }
+
+        let mut last_err: Option<ExplorerError> = None;
+        let mut outcome: Option<CreationInfo> = None;
+        for explorer in &self.explorers {
+            match explorer.fetch_creation(chain, address).await {
+                Ok(Some(info)) => {
+                    outcome = Some(info);
+                    last_err = None;
+                    break;
+                }
+                Ok(None) | Err(ExplorerError::Unsupported) => {}
+                Err(other) => {
+                    tracing::debug!(explorer = explorer.name(), error = %other, "creation fetch error");
+                    last_err = Some(other);
+                }
+            }
+        }
+
+        if outcome.is_none() {
+            if let Some(e) = last_err {
+                return Err(e);
+            }
+        }
+
+        if let Some(cache) = &self.creation_cache {
+            if let Err(e) = cache.put(&cache_key, &outcome, CREATION_TTL).await {
+                tracing::warn!(error = %e, "creation cache write failed");
+            }
+        }
+
+        Ok(outcome)
+    }
 }
 
 /// `ExplorerChain` wrapper that bypasses cache reads (still writes on success).
@@ -229,6 +300,7 @@ fn classify_error(e: &ExplorerError) -> ExplorerOutcome {
         ExplorerError::RateLimited => ExplorerOutcome::RateLimited,
         ExplorerError::ChainUnsupported => ExplorerOutcome::ChainUnsupported,
         ExplorerError::NoApiKey => ExplorerOutcome::NoApiKey,
+        ExplorerError::Unsupported => ExplorerOutcome::Other("endpoint unsupported".into()),
         ExplorerError::MalformedResponse(msg) | ExplorerError::Other(msg) => {
             ExplorerOutcome::Other(msg.clone())
         }
@@ -336,6 +408,7 @@ mod tests {
         ExplorerChain {
             explorers,
             cache: None,
+            creation_cache: None,
         }
     }
 
@@ -529,5 +602,106 @@ mod tests {
         assert!(r.result.is_some(), "result was {r:?}");
         assert_eq!(r.attempts.len(), 1);
         assert_eq!(r.attempts[0].explorer, "sourcify");
+    }
+
+    #[tokio::test]
+    async fn resolve_creation_skips_unsupported_explorers() {
+        // Sourcify returns Unsupported (default trait impl); the next explorer wins.
+        let unsupported = Arc::new(UnsupportedCreation);
+        let mut info = dummy_source();
+        info.contract_name = "ignored".into();
+        let happy = Arc::new(CannedCreation {
+            info: std::sync::Mutex::new(Some(CreationInfo {
+                tx_hash: alloy_primitives::B256::from([1u8; 32]),
+                creator: Address::from([0x11u8; 20]),
+                block_number: Some(42),
+            })),
+        });
+        let chain = chain_with(vec![
+            unsupported as Arc<dyn SourceExplorer>,
+            happy as Arc<dyn SourceExplorer>,
+        ]);
+        let out = chain
+            .resolve_creation(&Chain::EthereumMainnet, addr())
+            .await
+            .unwrap()
+            .expect("should find");
+        assert_eq!(out.block_number, Some(42));
+    }
+
+    #[tokio::test]
+    async fn resolve_creation_returns_err_when_all_real_explorers_fail() {
+        let failing = Arc::new(FailingCreation {
+            err: std::sync::Mutex::new(Some(ExplorerError::Network("down".into()))),
+        });
+        let chain = chain_with(vec![failing as Arc<dyn SourceExplorer>]);
+        let err = chain
+            .resolve_creation(&Chain::EthereumMainnet, addr())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ExplorerError::Network(_)));
+    }
+
+    struct UnsupportedCreation;
+    #[async_trait::async_trait]
+    impl SourceExplorer for UnsupportedCreation {
+        fn name(&self) -> &'static str {
+            "unsupported"
+        }
+        async fn fetch_source(
+            &self,
+            _chain: &Chain,
+            _address: Address,
+        ) -> Result<Option<VerifiedSource>, ExplorerError> {
+            Ok(None)
+        }
+    }
+
+    struct CannedCreation {
+        info: std::sync::Mutex<Option<CreationInfo>>,
+    }
+    #[async_trait::async_trait]
+    impl SourceExplorer for CannedCreation {
+        fn name(&self) -> &'static str {
+            "canned"
+        }
+        async fn fetch_source(
+            &self,
+            _chain: &Chain,
+            _address: Address,
+        ) -> Result<Option<VerifiedSource>, ExplorerError> {
+            Ok(None)
+        }
+        async fn fetch_creation(
+            &self,
+            _chain: &Chain,
+            _address: Address,
+        ) -> Result<Option<CreationInfo>, ExplorerError> {
+            Ok(self.info.lock().unwrap().take())
+        }
+    }
+
+    struct FailingCreation {
+        err: std::sync::Mutex<Option<ExplorerError>>,
+    }
+    #[async_trait::async_trait]
+    impl SourceExplorer for FailingCreation {
+        fn name(&self) -> &'static str {
+            "failing"
+        }
+        async fn fetch_source(
+            &self,
+            _chain: &Chain,
+            _address: Address,
+        ) -> Result<Option<VerifiedSource>, ExplorerError> {
+            Ok(None)
+        }
+        async fn fetch_creation(
+            &self,
+            _chain: &Chain,
+            _address: Address,
+        ) -> Result<Option<CreationInfo>, ExplorerError> {
+            Err(self.err.lock().unwrap().take().unwrap())
+        }
     }
 }

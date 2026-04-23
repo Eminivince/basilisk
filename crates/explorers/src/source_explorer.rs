@@ -6,7 +6,10 @@ use alloy_primitives::Address;
 use async_trait::async_trait;
 use basilisk_core::Chain;
 
-use crate::{error::ExplorerError, types::VerifiedSource};
+use crate::{
+    error::ExplorerError,
+    types::{CreationInfo, VerifiedSource},
+};
 
 /// A single source-verification explorer.
 ///
@@ -26,6 +29,18 @@ pub trait SourceExplorer: Send + Sync {
         chain: &Chain,
         address: Address,
     ) -> Result<Option<VerifiedSource>, ExplorerError>;
+
+    /// Look up the creation transaction for `address` on `chain`.
+    ///
+    /// Default impl returns [`ExplorerError::Unsupported`] so explorers that
+    /// don't have this endpoint (e.g. Sourcify) are transparent to callers.
+    async fn fetch_creation(
+        &self,
+        _chain: &Chain,
+        _address: Address,
+    ) -> Result<Option<CreationInfo>, ExplorerError> {
+        Err(ExplorerError::Unsupported)
+    }
 }
 
 /// Normalize an explorer-supplied source path into something safe to use as

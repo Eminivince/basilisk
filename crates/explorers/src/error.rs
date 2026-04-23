@@ -13,6 +13,12 @@ pub enum ExplorerError {
     #[error("rate limited")]
     RateLimited,
 
+    /// Explorer doesn't implement this endpoint at all (e.g. Sourcify has
+    /// no `getcontractcreation`). Chains skip past it without logging a
+    /// hard failure.
+    #[error("endpoint not supported by this explorer")]
+    Unsupported,
+
     /// The explorer doesn't support this chain.
     #[error("chain not supported by this explorer")]
     ChainUnsupported,

@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
 use serde::{Deserialize, Serialize};
 
 /// A single verified source payload, normalized across explorers.
@@ -37,6 +37,17 @@ pub struct VerifiedSource {
 pub struct OptimizerSettings {
     pub enabled: bool,
     pub runs: u32,
+}
+
+/// Creation-transaction metadata for a contract, per an explorer's best
+/// knowledge. `block_number` is optional because Etherscan's
+/// `getcontractcreation` doesn't always populate it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreationInfo {
+    pub tx_hash: B256,
+    pub creator: Address,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_number: Option<u64>,
 }
 
 /// How closely a verification match fits — Sourcify-specific distinction

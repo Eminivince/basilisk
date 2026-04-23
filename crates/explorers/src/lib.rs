@@ -20,6 +20,6 @@ pub use etherscan::Etherscan;
 pub use source_explorer::SourceExplorer;
 pub use sourcify::Sourcify;
 pub use types::{
-    ExplorerAttempt, ExplorerOutcome, MatchQuality, OptimizerSettings, ResolutionAttempt,
-    VerifiedSource,
+    CreationInfo, ExplorerAttempt, ExplorerOutcome, MatchQuality, OptimizerSettings,
+    ResolutionAttempt, VerifiedSource,
 };

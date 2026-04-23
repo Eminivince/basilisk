@@ -13,7 +13,7 @@
 
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
 use async_trait::async_trait;
 use basilisk_core::Chain;
 use serde::Deserialize;
@@ -21,7 +21,7 @@ use serde::Deserialize;
 use crate::{
     error::ExplorerError,
     source_explorer::{sanitize_path, SourceExplorer},
-    types::{OptimizerSettings, VerifiedSource},
+    types::{CreationInfo, OptimizerSettings, VerifiedSource},
 };
 
 /// Default Etherscan V2 API host.
@@ -219,6 +219,95 @@ impl SourceExplorer for Etherscan {
             implementation_hint,
             metadata,
         }))
+    }
+
+    async fn fetch_creation(
+        &self,
+        chain: &Chain,
+        address: Address,
+    ) -> Result<Option<CreationInfo>, ExplorerError> {
+        if !Self::is_chain_supported(chain) {
+            return Err(ExplorerError::ChainUnsupported);
+        }
+        if self.api_key.trim().is_empty() {
+            return Err(ExplorerError::NoApiKey);
+        }
+
+        let url = format!("{}/v2/api", self.base);
+        let res = self
+            .client
+            .get(&url)
+            .query(&[
+                ("chainid", chain.chain_id().to_string()),
+                ("module", "contract".into()),
+                ("action", "getcontractcreation".into()),
+                ("contractaddresses", address.to_string()),
+                ("apikey", self.api_key.clone()),
+            ])
+            .send()
+            .await
+            .map_err(|e| ExplorerError::Network(e.to_string()))?;
+
+        let status = res.status();
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(ExplorerError::RateLimited);
+        }
+        if !status.is_success() {
+            return Err(ExplorerError::Other(format!("HTTP {status}")));
+        }
+
+        let raw: serde_json::Value = res
+            .json()
+            .await
+            .map_err(|e| ExplorerError::MalformedResponse(e.to_string()))?;
+
+        // Etherscan returns status="0" for "no data" on this endpoint.
+        if raw.get("status").and_then(serde_json::Value::as_str) == Some("0") {
+            let msg = raw
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let result_msg = raw
+                .get("result")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let combined = format!("{msg} {result_msg}");
+            if combined.contains("rate limit") || combined.contains("Max rate") {
+                return Err(ExplorerError::RateLimited);
+            }
+            return Ok(None);
+        }
+
+        let Some(first) = raw
+            .get("result")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+        else {
+            return Ok(None);
+        };
+
+        let tx_hash = first
+            .get("txHash")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|s| s.parse::<B256>().ok());
+        let creator = first
+            .get("contractCreator")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|s| s.parse::<Address>().ok());
+        // blockNumber sometimes appears; Etherscan returns it as a decimal string.
+        let block_number = first
+            .get("blockNumber")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|s| s.parse::<u64>().ok());
+
+        match (tx_hash, creator) {
+            (Some(tx_hash), Some(creator)) => Ok(Some(CreationInfo {
+                tx_hash,
+                creator,
+                block_number,
+            })),
+            _ => Ok(None),
+        }
     }
 }
 
@@ -564,5 +653,81 @@ mod tests {
         let out = parse_source_code(raw);
         assert!(out.contains_key(std::path::Path::new("good.sol")));
         assert!(!out.keys().any(|p| p.to_string_lossy().contains("evil")));
+    }
+
+    #[tokio::test]
+    async fn creation_ok_for_known_address() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v2/api"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": "1",
+                "message": "OK",
+                "result": [{
+                    "contractAddress": "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+                    "contractCreator": "0x1111111111111111111111111111111111111111",
+                    "txHash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+                    "blockNumber": "12345"
+                }]
+            })))
+            .mount(&server)
+            .await;
+        let es = Etherscan::new_with_base(server.uri(), "k");
+        let info = es
+            .fetch_creation(&Chain::EthereumMainnet, addr())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(info.block_number, Some(12345));
+    }
+
+    #[tokio::test]
+    async fn creation_none_when_status_zero() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v2/api"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": "0",
+                "message": "No data",
+                "result": []
+            })))
+            .mount(&server)
+            .await;
+        let es = Etherscan::new_with_base(server.uri(), "k");
+        let got = es
+            .fetch_creation(&Chain::EthereumMainnet, addr())
+            .await
+            .unwrap();
+        assert!(got.is_none());
+    }
+
+    #[tokio::test]
+    async fn creation_rate_limit_classified() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v2/api"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": "0",
+                "message": "Max rate limit reached",
+                "result": "Max rate limit reached"
+            })))
+            .mount(&server)
+            .await;
+        let es = Etherscan::new_with_base(server.uri(), "k");
+        let err = es
+            .fetch_creation(&Chain::EthereumMainnet, addr())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ExplorerError::RateLimited));
+    }
+
+    #[tokio::test]
+    async fn creation_requires_api_key() {
+        let es = Etherscan::new_with_base("http://127.0.0.1:1", "   ");
+        let err = es
+            .fetch_creation(&Chain::EthereumMainnet, addr())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ExplorerError::NoApiKey));
     }
 }

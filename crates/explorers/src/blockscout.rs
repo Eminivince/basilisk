@@ -10,7 +10,7 @@
 
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
 use async_trait::async_trait;
 use basilisk_core::{Chain, Config};
 use serde::Deserialize;
@@ -18,7 +18,7 @@ use serde::Deserialize;
 use crate::{
     error::ExplorerError,
     source_explorer::{sanitize_path, SourceExplorer},
-    types::{OptimizerSettings, VerifiedSource},
+    types::{CreationInfo, OptimizerSettings, VerifiedSource},
 };
 
 /// Blockscout client scoped to a single base URL.
@@ -196,6 +196,53 @@ impl SourceExplorer for Blockscout {
             implementation_hint,
             metadata,
         }))
+    }
+
+    async fn fetch_creation(
+        &self,
+        _chain: &Chain,
+        address: Address,
+    ) -> Result<Option<CreationInfo>, ExplorerError> {
+        let url = format!("{}/api/v2/addresses/{}", self.base, address);
+        let res = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| ExplorerError::Network(e.to_string()))?;
+        let status = res.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(ExplorerError::RateLimited);
+        }
+        if !status.is_success() {
+            return Err(ExplorerError::Other(format!("HTTP {status}")));
+        }
+        let body: serde_json::Value = res
+            .json()
+            .await
+            .map_err(|e| ExplorerError::MalformedResponse(e.to_string()))?;
+
+        let tx_hash = body
+            .get("creation_tx_hash")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|s| s.parse::<B256>().ok());
+        let creator = body
+            .get("creator_address_hash")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|s| s.parse::<Address>().ok());
+        match (tx_hash, creator) {
+            (Some(tx_hash), Some(creator)) => Ok(Some(CreationInfo {
+                tx_hash,
+                creator,
+                block_number: None,
+            })),
+            // Field absent or invalid: treat as Unsupported so callers fall
+            // through to the next explorer rather than recording a miss.
+            _ => Err(ExplorerError::Unsupported),
+        }
     }
 }
 
@@ -421,5 +468,43 @@ mod tests {
             Blockscout::resolve_host(&Chain::EthereumMainnet, &cfg).as_deref(),
             Some("https://eth.blockscout.com"),
         );
+    }
+
+    #[tokio::test]
+    async fn creation_ok_when_fields_present() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/api/v2/addresses/0x.*$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "creator_address_hash": "0x1111111111111111111111111111111111111111",
+                "creation_tx_hash": "0x2222222222222222222222222222222222222222222222222222222222222222"
+            })))
+            .mount(&server)
+            .await;
+        let bs = Blockscout::new(server.uri());
+        let info = bs
+            .fetch_creation(&Chain::EthereumMainnet, addr())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(info.block_number, None);
+    }
+
+    #[tokio::test]
+    async fn creation_unsupported_when_fields_missing() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/api/v2/addresses/0x.*$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "some_other_field": "whatever"
+            })))
+            .mount(&server)
+            .await;
+        let bs = Blockscout::new(server.uri());
+        let err = bs
+            .fetch_creation(&Chain::EthereumMainnet, addr())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ExplorerError::Unsupported));
     }
 }

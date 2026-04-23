@@ -62,7 +62,10 @@ mod tests {
     use crate::memory::{LogMatcher, MemoryProvider};
 
     fn log_with_block(block: u64) -> RpcLog {
-        Log { block_number: Some(block), ..Log::default() }
+        Log {
+            block_number: Some(block),
+            ..Log::default()
+        }
     }
 
     #[tokio::test]
