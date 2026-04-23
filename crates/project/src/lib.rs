@@ -16,6 +16,7 @@ pub mod foundry;
 pub mod hardhat;
 pub(crate) mod js_text;
 pub mod layout;
+pub mod sources;
 pub mod truffle;
 
 pub use config::{load_project_config, ProjectConfig};
@@ -26,6 +27,7 @@ pub use foundry::{
 };
 pub use hardhat::{parse_hardhat_config, parse_hardhat_source, HardhatConfig, HardhatStyle};
 pub use layout::{detect_layout, ConfigFile, ProjectLayout};
+pub use sources::{enumerate_sources, SourceEnumeration, SourceFile, SourceKind};
 pub use truffle::{parse_truffle_config, parse_truffle_source, TruffleConfig};
 
 // Convenience re-export so callers don't need a direct `basilisk-core`
