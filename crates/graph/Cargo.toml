@@ -1,0 +1,16 @@
+[package]
+name = "basilisk-graph"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "ContractGraph + edge types + cycle detection + shortest path + DOT export."
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true }
+serde = { workspace = true }

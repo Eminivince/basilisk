@@ -887,6 +887,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "basilisk-graph"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "serde",
+]
+
+[[package]]
 name = "basilisk-logging"
 version = "0.1.0"
 dependencies = [
