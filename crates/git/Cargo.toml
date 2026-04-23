@@ -1,0 +1,26 @@
+[package]
+name = "basilisk-git"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Git clone + persistent repo cache for Basilisk."
+
+[lints]
+workspace = true
+
+[dependencies]
+basilisk-core = { workspace = true }
+basilisk-github = { workspace = true }
+dirs = { workspace = true }
+git2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
