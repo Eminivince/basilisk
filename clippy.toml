@@ -1,0 +1,3 @@
+# Workspace-wide clippy config.
+# Lint selection is declared in the root Cargo.toml under [workspace.lints].
+# This file exists for future per-lint tuning (thresholds, allow-lists, etc.).

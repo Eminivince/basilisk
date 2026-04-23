@@ -1,0 +1,24 @@
+# Build artifacts
+/target/
+**/target/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+
+# Backups / junk
+*.bak
+*.orig

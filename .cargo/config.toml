@@ -1,0 +1,13 @@
+# Shared Cargo build settings for the Basilisk workspace.
+
+[alias]
+# Cargo aliases can't chain multiple cargo subcommands in one alias,
+# so CI is expressed as three separate aliases. Run them in sequence:
+#   cargo fmt-check && cargo lint && cargo test-all
+fmt-check = "fmt --all -- --check"
+lint = "clippy --workspace --all-targets -- -D warnings"
+test-all = "test --workspace --all-targets"
+
+[net]
+# Use the Git CLI for fetches; faster and more reliable on many hosts.
+git-fetch-with-cli = true
