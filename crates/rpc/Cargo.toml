@@ -1,0 +1,31 @@
+[package]
+name = "basilisk-rpc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "RPC client abstraction and providers for Basilisk."
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true }
+alloy-provider = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
+alloy-transport-http = { workspace = true }
+async-trait = { workspace = true }
+basilisk-cache = { workspace = true }
+basilisk-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
