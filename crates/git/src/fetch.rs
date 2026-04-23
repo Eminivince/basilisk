@@ -510,29 +510,23 @@ mod tests {
         assert_eq!(ref_to_clone_arg(&GitRef::Ambiguous("main".into())), None);
     }
 
+    /// All three `clone_url` cases run in one test to serialise the
+    /// `GITHUB_TOKEN` env-var mutations — Rust runs unit tests in
+    /// parallel by default, and interleaving set/remove from separate
+    /// tests makes these race.
     #[test]
-    fn clone_url_embeds_token_when_env_set() {
-        // Scope the env var so we don't pollute other tests.
-        // SAFETY: single-threaded use within this test.
+    fn clone_url_honours_github_token_env_var() {
+        // Set → token embedded.
         std::env::set_var("GITHUB_TOKEN", "ghp_test_token_XYZ");
-        let url = clone_url("foo", "bar");
-        std::env::remove_var("GITHUB_TOKEN");
-        assert!(url.starts_with("https://ghp_test_token_XYZ@github.com/"));
-    }
+        assert!(clone_url("foo", "bar").starts_with("https://ghp_test_token_XYZ@github.com/"));
 
-    #[test]
-    fn clone_url_plain_https_when_token_missing() {
-        std::env::remove_var("GITHUB_TOKEN");
-        let url = clone_url("foo", "bar");
-        assert_eq!(url, "https://github.com/foo/bar.git");
-    }
-
-    #[test]
-    fn clone_url_ignores_whitespace_only_token() {
+        // Whitespace-only → ignored, plain HTTPS.
         std::env::set_var("GITHUB_TOKEN", "   ");
-        let url = clone_url("foo", "bar");
+        assert_eq!(clone_url("foo", "bar"), "https://github.com/foo/bar.git");
+
+        // Unset → plain HTTPS.
         std::env::remove_var("GITHUB_TOKEN");
-        assert_eq!(url, "https://github.com/foo/bar.git");
+        assert_eq!(clone_url("foo", "bar"), "https://github.com/foo/bar.git");
     }
 
     #[test]

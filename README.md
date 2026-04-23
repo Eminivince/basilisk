@@ -90,6 +90,61 @@ audit recon 0x87870... --chain ethereum --dot /tmp/aave.dot
 dot -Tpng /tmp/aave.dot -o /tmp/aave.png
 ```
 
+### Source-side recon
+
+`audit recon` also classifies local paths and GitHub URLs. Against the
+`foundry-minimal` fixture shipped with this repo:
+
+```sh
+audit recon crates/project/tests/fixtures/foundry-minimal
+```
+
+Produces:
+
+```
+Project at .../crates/project/tests/fixtures/foundry-minimal
+  kind: foundry
+  configs: foundry.toml
+  solc: 0.8.20
+  remappings: 2
+  sources: 2 file(s)
+  tests: 1 file(s)
+  imports: 4 resolved, 0 unresolved (0 file(s) with unresolved)
+  externals: 2 file(s) reached via imports (deps)
+```
+
+Unresolvable imports are surfaced separately, not silently dropped:
+
+```
+Unresolved imports (2):
+  src/Good.sol:5  "./does-not-exist.sol"
+  src/Good.sol:6  "@missing/Something.sol"
+```
+
+GitHub URLs follow the same path — the repo is shallow-cloned into
+`~/.basilisk/repos/` (or refreshed with `--no-cache`), then the same
+pipeline runs against the working tree:
+
+```sh
+audit recon https://github.com/foundry-rs/forge-template
+audit recon https://github.com/OpenZeppelin/openzeppelin-contracts/tree/v5.0.2
+```
+
+For users who just want the classifier output without a clone, add
+`--no-fetch`:
+
+```sh
+audit recon https://github.com/foundry-rs/forge-template --no-fetch --output json
+```
+
+Inspect or prune the persistent clone cache:
+
+```sh
+audit cache repos stats                     # count + disk usage
+audit cache repos list                      # table of cached repos
+audit cache repos clear --owner foundry-rs  # scoped wipe
+```
+
 ## Architecture
 
 Single-binary tool delivered as a Cargo workspace. Today the workspace
