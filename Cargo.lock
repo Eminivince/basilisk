@@ -931,6 +931,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "basilisk-llm"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
 name = "basilisk-logging"
 version = "0.1.0"
 dependencies = [

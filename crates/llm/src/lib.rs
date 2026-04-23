@@ -1,0 +1,31 @@
+//! Model-agnostic LLM backend for Basilisk.
+//!
+//! The crate provides:
+//!  * [`LlmBackend`] — a provider-agnostic trait for completion requests.
+//!  * [`AnthropicBackend`] — first implementation, using the Anthropic
+//!    Messages API.
+//!  * Shared request / response / error / pricing types.
+//!
+//! Streaming support lands in set-6 CP2; the CP1 surface is the
+//! non-streaming `complete` path, which is enough to drive the agent
+//! loop's first iteration.
+//!
+//! Public vocabulary ([`types`]) mirrors Anthropic's Messages shape
+//! because that's where we've validated first. `OpenAI` / local
+//! implementations shim their provider types at the backend boundary;
+//! downstream agent code never sees provider-specific structures.
+
+pub mod anthropic;
+pub mod backend;
+pub mod error;
+pub mod pricing;
+pub mod types;
+
+pub use anthropic::{AnthropicBackend, DEFAULT_MODEL};
+pub use backend::LlmBackend;
+pub use error::LlmError;
+pub use pricing::{ModelPricing, PricingTable};
+pub use types::{
+    CompletionRequest, CompletionResponse, ContentBlock, Message, MessageRole, StopReason,
+    TokenUsage, ToolChoice, ToolDefinition,
+};
