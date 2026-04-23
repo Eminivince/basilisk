@@ -7,6 +7,7 @@
 
 pub mod cache;
 pub mod error;
+pub mod fetch;
 pub(crate) mod time_serde;
 pub mod types;
 
