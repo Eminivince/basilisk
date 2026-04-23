@@ -1,0 +1,29 @@
+[package]
+name = "basilisk-explorers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Source-verification explorer clients (Sourcify, Etherscan, Blockscout) for Basilisk."
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true }
+async-trait = { workspace = true }
+basilisk-cache = { workspace = true }
+basilisk-core = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+wiremock = { workspace = true }

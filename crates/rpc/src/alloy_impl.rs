@@ -186,7 +186,10 @@ mod tests {
 
     #[test]
     fn for_chain_constructs_when_alchemy_key_set() {
-        let config = Config { alchemy_api_key: Some("key".into()), ..Config::default() };
+        let config = Config {
+            alchemy_api_key: Some("key".into()),
+            ..Config::default()
+        };
         let p = AlloyProvider::for_chain(&Chain::EthereumMainnet, &config).unwrap();
         assert_eq!(p.chain(), &Chain::EthereumMainnet);
         assert!(
@@ -200,7 +203,10 @@ mod tests {
     fn for_chain_constructs_with_user_rpc_url() {
         let mut rpc_urls = std::collections::HashMap::new();
         rpc_urls.insert("sepolia".into(), "https://example.test/sep".into());
-        let config = Config { rpc_urls, ..Config::default() };
+        let config = Config {
+            rpc_urls,
+            ..Config::default()
+        };
         let p = AlloyProvider::for_chain(&Chain::Sepolia, &config).unwrap();
         assert_eq!(p.endpoint(), "https://example.test/sep");
     }
@@ -209,7 +215,10 @@ mod tests {
     fn invalid_url_classified() {
         let mut rpc_urls = std::collections::HashMap::new();
         rpc_urls.insert("ethereum".into(), "not a url".into());
-        let config = Config { rpc_urls, ..Config::default() };
+        let config = Config {
+            rpc_urls,
+            ..Config::default()
+        };
         let err = AlloyProvider::for_chain(&Chain::EthereumMainnet, &config).unwrap_err();
         assert!(matches!(err, RpcError::InvalidUrl { .. }), "got {err:?}");
     }
