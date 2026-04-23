@@ -887,6 +887,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "basilisk-github"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "basilisk-cache",
+ "basilisk-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
 name = "basilisk-graph"
 version = "0.1.0"
 dependencies = [

@@ -15,6 +15,7 @@ authors = ["Basilisk Contributors"]
 basilisk-cache = { path = "crates/cache", version = "0.1.0" }
 basilisk-core = { path = "crates/core", version = "0.1.0" }
 basilisk-explorers = { path = "crates/explorers", version = "0.1.0" }
+basilisk-github = { path = "crates/github", version = "0.1.0" }
 basilisk-graph = { path = "crates/graph", version = "0.1.0" }
 basilisk-logging = { path = "crates/logging", version = "0.1.0" }
 basilisk-onchain = { path = "crates/onchain", version = "0.1.0" }

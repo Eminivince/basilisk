@@ -1,0 +1,27 @@
+[package]
+name = "basilisk-github"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Thin GitHub REST client for ref resolution + optional private-repo auth."
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+basilisk-cache = { workspace = true }
+basilisk-core = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+wiremock = { workspace = true }
