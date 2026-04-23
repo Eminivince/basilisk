@@ -5,20 +5,24 @@
 //! (checkpoint 8) expands from a root into a [`ResolvedSystem`] with a
 //! typed [`basilisk_graph::ContractGraph`].
 
+pub mod constructor;
 pub mod display;
 pub mod enrichment;
 pub mod error;
+pub mod history;
 pub mod ingester;
 pub mod proxy;
 pub mod resolved;
 pub mod system;
 pub(crate) mod time_serde;
 
+pub use constructor::recover_constructor_args;
 pub use enrichment::{
     AddressReference, ConstructorArgs, DecodedArg, ReferenceSource, StorageLayout,
     StorageLayoutSource, StorageSlot,
 };
 pub use error::IngestError;
+pub use history::fetch_upgrade_history;
 pub use ingester::{OnchainIngester, DEFAULT_TIMEOUT_SECS};
 pub use proxy::{detect_proxy, DiamondFacet, ProxyEvidence, ProxyInfo, ProxyKind, UpgradeEvent};
 pub use resolved::{ResolutionSources, ResolvedContract};

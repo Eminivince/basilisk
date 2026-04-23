@@ -907,6 +907,7 @@ name = "basilisk-onchain"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-rpc-types-eth",
  "alloy-sol-types",
  "async-trait",
  "basilisk-core",

@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 alloy-primitives = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
 alloy-sol-types = { workspace = true }
 async-trait = { workspace = true }
 basilisk-core = { workspace = true }
