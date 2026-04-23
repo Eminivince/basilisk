@@ -245,14 +245,10 @@ fn parse_github_path(input: &str, url: &Url) -> Target {
             }
         }
         Some(_) => {
-            // Unrecognized third segment — treat as ambiguous malformed shape.
-            return Target::Unknown {
-                input: input.to_string(),
-                reason: UnknownReason::MalformedUrl {
-                    detail: format!("unrecognized GitHub path: {}", url.path()),
-                },
-                suggestions: Vec::new(),
-            };
+            // Unrecognized third segment (issues, pulls, actions, etc.) — degrade
+            // to a bare repo reference. The user pointed at the project; we don't
+            // need to understand the sub-URL to know which repo they meant.
+            (None, None)
         }
     };
 
@@ -408,6 +404,9 @@ fn contains_sol_file(root: &Path) -> bool {
         "cache",
         ".git",
         "target",
+        "dist",
+        "build",
+        "coverage",
     ];
     let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -499,7 +498,7 @@ mod tests {
     fn lowercase_address_accepted_without_checksum_enforcement() {
         match detect(VITALIK_LOWER, None) {
             Target::OnChain { address, .. } => {
-                assert_eq!(crate::target::address_hex(&address), VITALIK_CHECKSUM);
+                assert_eq!(address.to_string(), VITALIK_CHECKSUM);
             }
             other => panic!("got {other:?}"),
         }
@@ -675,6 +674,24 @@ mod tests {
             Target::Github { owner, repo, .. } => {
                 assert_eq!(owner, "foundry-rs");
                 assert_eq!(repo, "foundry");
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn github_issues_url_degrades_to_bare_repo() {
+        match detect("https://github.com/foundry-rs/foundry/issues/1234", None) {
+            Target::Github {
+                owner,
+                repo,
+                reference,
+                subpath,
+            } => {
+                assert_eq!(owner, "foundry-rs");
+                assert_eq!(repo, "foundry");
+                assert!(reference.is_none());
+                assert!(subpath.is_none());
             }
             other => panic!("got {other:?}"),
         }

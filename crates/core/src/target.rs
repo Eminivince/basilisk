@@ -5,10 +5,10 @@
 //! repository, an on-chain contract, a local project — or carries a clear
 //! reason why the input couldn't be classified.
 
-use std::{fmt, path::PathBuf};
+use std::{fmt, path::PathBuf, str::FromStr};
 
+use alloy_primitives::Address;
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Keccak256};
 use thiserror::Error;
 
 use crate::chain::Chain;
@@ -25,12 +25,8 @@ pub enum Target {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subpath: Option<PathBuf>,
     },
-    /// A deployed contract, identified by 20-byte address on a specific chain.
-    OnChain {
-        #[serde(with = "address_serde")]
-        address: [u8; 20],
-        chain: Chain,
-    },
+    /// A deployed contract, identified by a 20-byte EVM address on a specific chain.
+    OnChain { address: Address, chain: Chain },
     /// A local filesystem project. `root` is canonicalized to an absolute path.
     LocalPath {
         root: PathBuf,
@@ -134,7 +130,7 @@ impl fmt::Display for Target {
             }
             Self::OnChain { address, chain } => {
                 writeln!(f, "Target: on-chain contract")?;
-                writeln!(f, "  address: {}", address_hex(address))?;
+                writeln!(f, "  address: {address}")?;
                 writeln!(f, "  chain:   {} (id {})", chain, chain.chain_id())
             }
             Self::LocalPath { root, project_kind } => {
@@ -213,38 +209,13 @@ pub enum AddressParseError {
     BadChecksum { expected: String, got: String },
 }
 
-/// Render a 20-byte address as an EIP-55 checksummed hex string with `0x` prefix.
-pub fn address_hex(bytes: &[u8; 20]) -> String {
-    let lower = hex::encode(bytes);
-    let mut hasher = Keccak256::new();
-    hasher.update(lower.as_bytes());
-    let hash = hasher.finalize();
-
-    let mut out = String::with_capacity(42);
-    out.push_str("0x");
-    for (i, ch) in lower.chars().enumerate() {
-        if ch.is_ascii_alphabetic() {
-            // Each byte of the hash maps to two nibbles; pick the nibble at position `i`.
-            let nibble = (hash[i / 2] >> (4 * (1 - (i % 2)))) & 0x0f;
-            if nibble >= 8 {
-                out.push(ch.to_ascii_uppercase());
-            } else {
-                out.push(ch);
-            }
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
-/// Parse a hex address into 20 raw bytes.
+/// Parse a hex address into an [`alloy_primitives::Address`].
 ///
 /// Accepts:
 /// - `0x`-prefixed (preferred) or unprefixed 40-character hex.
 /// - All-lowercase or all-uppercase: treated as unchecksummed input and accepted.
 /// - Mixed-case: enforced as EIP-55 and rejected on checksum mismatch.
-pub fn parse_address(input: &str) -> Result<[u8; 20], AddressParseError> {
+pub fn parse_address(input: &str) -> Result<Address, AddressParseError> {
     let trimmed = input.trim();
     let body = trimmed
         .strip_prefix("0x")
@@ -258,36 +229,24 @@ pub fn parse_address(input: &str) -> Result<[u8; 20], AddressParseError> {
         return Err(AddressParseError::InvalidHex(body.to_string()));
     }
 
-    let mut bytes = [0u8; 20];
-    hex::decode_to_slice(body, &mut bytes)
-        .map_err(|e| AddressParseError::InvalidHex(e.to_string()))?;
+    // Always parse from the lowercased form to obtain the canonical address.
+    // Length + hex were validated above, so this cannot fail.
+    let lower = format!("0x{}", body.to_ascii_lowercase());
+    let canonical =
+        Address::from_str(&lower).map_err(|e| AddressParseError::InvalidHex(e.to_string()))?;
 
+    // Mixed case: require strict EIP-55 match against alloy's canonical rendering.
     let has_upper = body.chars().any(|c| c.is_ascii_uppercase());
-    let has_lower = body.chars().any(|c| c.is_ascii_lowercase());
-    if has_upper && has_lower {
-        let expected = address_hex(&bytes);
+    let has_lower_letters = body.chars().any(|c| c.is_ascii_lowercase());
+    if has_upper && has_lower_letters {
         let got = format!("0x{body}");
+        let expected = canonical.to_string();
         if expected != got {
             return Err(AddressParseError::BadChecksum { expected, got });
         }
     }
 
-    Ok(bytes)
-}
-
-mod address_serde {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    use super::{address_hex, parse_address};
-
-    pub fn serialize<S: Serializer>(addr: &[u8; 20], s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&address_hex(addr))
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 20], D::Error> {
-        let s = String::deserialize(d)?;
-        parse_address(&s).map_err(serde::de::Error::custom)
-    }
+    Ok(canonical)
 }
 
 #[cfg(test)]
@@ -300,8 +259,8 @@ mod tests {
 
     #[test]
     fn eip55_known_vector() {
-        let bytes = parse_address(VITALIK_LOWER).expect("lowercase parses");
-        assert_eq!(address_hex(&bytes), VITALIK_CHECKSUM);
+        let addr = parse_address(VITALIK_LOWER).expect("lowercase parses");
+        assert_eq!(addr.to_string(), VITALIK_CHECKSUM);
     }
 
     #[test]
@@ -313,8 +272,8 @@ mod tests {
 
     #[test]
     fn parse_accepts_correct_checksum() {
-        let bytes = parse_address(VITALIK_CHECKSUM).expect("checksum parses");
-        assert_eq!(address_hex(&bytes), VITALIK_CHECKSUM);
+        let addr = parse_address(VITALIK_CHECKSUM).expect("checksum parses");
+        assert_eq!(addr.to_string(), VITALIK_CHECKSUM);
     }
 
     #[test]
@@ -344,15 +303,15 @@ mod tests {
 
     #[test]
     fn parse_accepts_unprefixed() {
-        let bytes = parse_address("fB6916095ca1df60bB79Ce92cE3Ea74c37c5d359").unwrap();
-        assert_eq!(address_hex(&bytes), VITALIK_CHECKSUM);
+        let addr = parse_address("fB6916095ca1df60bB79Ce92cE3Ea74c37c5d359").unwrap();
+        assert_eq!(addr.to_string(), VITALIK_CHECKSUM);
     }
 
     #[test]
     fn target_serde_round_trip_on_chain() {
-        let bytes = parse_address(VITALIK_CHECKSUM).unwrap();
+        let addr = parse_address(VITALIK_CHECKSUM).unwrap();
         let t = Target::OnChain {
-            address: bytes,
+            address: addr,
             chain: Chain::Arbitrum,
         };
         let json = serde_json::to_string(&t).unwrap();

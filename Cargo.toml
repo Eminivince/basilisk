@@ -12,19 +12,24 @@ authors = ["Basilisk Contributors"]
 
 [workspace.dependencies]
 # Internal crates
+basilisk-cache = { path = "crates/cache", version = "0.1.0" }
 basilisk-core = { path = "crates/core", version = "0.1.0" }
 basilisk-logging = { path = "crates/logging", version = "0.1.0" }
 
 # External
+alloy-primitives = { version = "0.8", features = ["serde"] }
 anyhow = "1.0"
+async-trait = "0.1"
 clap = { version = "4.5", features = ["derive", "env"] }
 config = { version = "0.14", default-features = false, features = ["toml"] }
+dirs = "5.0"
 dotenvy = "0.15"
 hex = "0.4"
 regex = "1.11"
 schemars = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10"
 sha3 = "0.10"
 thiserror = "1.0"
 tokio = { version = "1", features = ["full"] }
@@ -46,7 +51,6 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 must_use_candidate = "allow"
 unnecessary_wraps = "allow"        # TEMP: remove once handlers have fallible bodies
-unused_async = "allow"             # TEMP: remove once handlers await real work
 needless_pass_by_value = "allow"   # TEMP: revisit once signatures stabilize
 
 [profile.release]

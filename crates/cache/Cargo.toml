@@ -1,27 +1,25 @@
 [package]
-name = "basilisk-core"
+name = "basilisk-cache"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Shared types, configuration, and errors for the Basilisk smart-contract auditor."
+description = "On-disk TTL cache used by Basilisk's RPC and explorer clients."
 
 [lints]
 workspace = true
 
 [dependencies]
-alloy-primitives = { workspace = true }
-config = { workspace = true }
-dotenvy = { workspace = true }
-regex = { workspace = true }
-schemars = { workspace = true }
+dirs = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
-url = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

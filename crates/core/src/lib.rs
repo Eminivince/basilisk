@@ -15,6 +15,4 @@ pub use chain::{Chain, ChainParseError};
 pub use config::Config;
 pub use detect::detect;
 pub use error::{Error, Result};
-pub use target::{
-    address_hex, parse_address, AddressParseError, GitRef, ProjectKind, Target, UnknownReason,
-};
+pub use target::{parse_address, AddressParseError, GitRef, ProjectKind, Target, UnknownReason};
