@@ -963,6 +963,7 @@ name = "basilisk-project"
 version = "0.1.0"
 dependencies = [
  "basilisk-core",
+ "regex",
  "serde",
  "tempfile",
  "thiserror 1.0.69",
