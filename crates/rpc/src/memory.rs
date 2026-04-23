@@ -15,7 +15,11 @@ use alloy_primitives::{Address, Bytes, B256};
 use async_trait::async_trait;
 use basilisk_core::Chain;
 
-use crate::{error::RpcError, provider::RpcProvider};
+use crate::{
+    error::RpcError,
+    provider::{LogFilter, RpcProvider},
+    types::{RpcLog, RpcTransaction},
+};
 
 /// Programmable in-memory provider. Cheap to clone (shared state).
 #[derive(Debug, Clone)]
@@ -29,8 +33,24 @@ struct Inner {
     code: HashMap<Address, Bytes>,
     storage: HashMap<(Address, B256), B256>,
     calls: HashMap<(Address, Bytes), Result<Bytes, RpcError>>,
+    logs: Vec<(LogMatcher, Vec<RpcLog>)>,
+    transactions: HashMap<B256, RpcTransaction>,
+    block_timestamps: HashMap<u64, u64>,
+    head_block: Option<u64>,
     chain_id_override: Option<u64>,
     call_count: u64,
+}
+
+/// Simple filter-matching shape used by the in-memory provider. We don't
+/// re-implement alloy's filter semantics — tests just seed exact filters
+/// or use [`LogMatcher::Any`] to return everything.
+#[derive(Debug, Clone)]
+pub enum LogMatcher {
+    /// Match every `get_logs` call.
+    Any,
+    /// Return these logs for any call whose address matches the single
+    /// entry supplied; otherwise don't match.
+    Address(Address),
 }
 
 impl MemoryProvider {
@@ -94,6 +114,38 @@ impl MemoryProvider {
         self
     }
 
+    /// Register logs to return for a matching `get_logs` call.
+    #[must_use]
+    pub fn with_logs(self, matcher: LogMatcher, logs: Vec<RpcLog>) -> Self {
+        self.inner.lock().unwrap().logs.push((matcher, logs));
+        self
+    }
+
+    /// Register a transaction keyed by its hash.
+    #[must_use]
+    pub fn with_transaction(self, hash: B256, tx: RpcTransaction) -> Self {
+        self.inner.lock().unwrap().transactions.insert(hash, tx);
+        self
+    }
+
+    /// Register a block-number → timestamp mapping.
+    #[must_use]
+    pub fn with_block_timestamp(self, block: u64, ts: u64) -> Self {
+        self.inner
+            .lock()
+            .unwrap()
+            .block_timestamps
+            .insert(block, ts);
+        self
+    }
+
+    /// Register the head block number reported by `get_block_number`.
+    #[must_use]
+    pub fn with_head_block(self, block: u64) -> Self {
+        self.inner.lock().unwrap().head_block = Some(block);
+        self
+    }
+
     /// Total calls observed across all RPC methods.
     pub fn call_count(&self) -> u64 {
         self.inner.lock().unwrap().call_count
@@ -136,6 +188,49 @@ impl RpcProvider for MemoryProvider {
         let mut i = self.inner.lock().unwrap();
         i.call_count += 1;
         Ok(i.chain_id_override.unwrap_or_else(|| self.chain.chain_id()))
+    }
+
+    async fn get_logs(&self, filter: LogFilter) -> Result<Vec<RpcLog>, RpcError> {
+        let mut i = self.inner.lock().unwrap();
+        i.call_count += 1;
+        let filter_addresses: Vec<Address> = filter.inner().address.iter().copied().collect();
+        let mut out = Vec::new();
+        for (matcher, logs) in &i.logs {
+            let matches = match matcher {
+                LogMatcher::Any => true,
+                LogMatcher::Address(a) => {
+                    filter_addresses.is_empty() || filter_addresses.contains(a)
+                }
+            };
+            if matches {
+                out.extend(logs.iter().cloned());
+            }
+        }
+        Ok(out)
+    }
+
+    async fn get_transaction(&self, hash: B256) -> Result<Option<RpcTransaction>, RpcError> {
+        let mut i = self.inner.lock().unwrap();
+        i.call_count += 1;
+        Ok(i.transactions.get(&hash).cloned())
+    }
+
+    async fn get_block_timestamp(&self, block: u64) -> Result<Option<u64>, RpcError> {
+        let mut i = self.inner.lock().unwrap();
+        i.call_count += 1;
+        Ok(i.block_timestamps.get(&block).copied())
+    }
+
+    async fn get_block_number(&self) -> Result<u64, RpcError> {
+        let mut i = self.inner.lock().unwrap();
+        i.call_count += 1;
+        Ok(i.head_block.unwrap_or(0))
+    }
+
+    async fn is_contract(&self, address: Address) -> Result<bool, RpcError> {
+        let mut i = self.inner.lock().unwrap();
+        i.call_count += 1;
+        Ok(i.code.get(&address).is_some_and(|b| !b.as_ref().is_empty()))
     }
 }
 
@@ -217,5 +312,45 @@ mod tests {
         let _ = p.get_code(addr(1)).await;
         let _ = p.chain_id().await;
         assert_eq!(p.call_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn is_contract_true_only_for_non_empty_bytecode() {
+        let code = Bytes::from_static(&[0x60, 0x80]);
+        let p = MemoryProvider::new(Chain::EthereumMainnet).with_code(addr(1), code);
+        assert!(p.is_contract(addr(1)).await.unwrap());
+        assert!(!p.is_contract(addr(2)).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn block_timestamp_and_head_defaults() {
+        let p = MemoryProvider::new(Chain::EthereumMainnet)
+            .with_block_timestamp(100, 1_700_000_000)
+            .with_head_block(123);
+        assert_eq!(
+            p.get_block_timestamp(100).await.unwrap(),
+            Some(1_700_000_000)
+        );
+        assert_eq!(p.get_block_timestamp(200).await.unwrap(), None);
+        assert_eq!(p.get_block_number().await.unwrap(), 123);
+    }
+
+    #[tokio::test]
+    async fn get_transaction_returns_none_when_unknown() {
+        // The in-memory provider has no way to synthesize a real
+        // `alloy_rpc_types_eth::Transaction` (its inner envelope doesn't
+        // impl `Default`). Non-hit paths still work, which is what we
+        // care about from the trait contract.
+        let p = MemoryProvider::new(Chain::EthereumMainnet);
+        assert!(p.get_transaction(B256::ZERO).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn get_logs_any_matcher_returns_all() {
+        use alloy_rpc_types_eth::Log;
+        let logs = vec![Log::default(), Log::default()];
+        let p = MemoryProvider::new(Chain::EthereumMainnet).with_logs(LogMatcher::Any, logs);
+        let out = p.get_logs(LogFilter::new()).await.unwrap();
+        assert_eq!(out.len(), 2);
     }
 }
