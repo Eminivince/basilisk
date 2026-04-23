@@ -17,6 +17,7 @@ pub mod hardhat;
 pub mod imports;
 pub(crate) mod js_text;
 pub mod layout;
+pub mod resolver;
 pub mod sources;
 pub mod truffle;
 
@@ -32,6 +33,7 @@ pub use imports::{
     ImportedSymbol,
 };
 pub use layout::{detect_layout, ConfigFile, ProjectLayout};
+pub use resolver::{ImportResolver, ResolutionAttempt, ResolutionVia, ResolvedImport};
 pub use sources::{enumerate_sources, SourceEnumeration, SourceFile, SourceKind};
 pub use truffle::{parse_truffle_config, parse_truffle_source, TruffleConfig};
 
