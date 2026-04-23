@@ -10,6 +10,7 @@
 //! source / test / lib paths we found at the root. No config parsing, no
 //! source walking — later checkpoints layer those on.
 
+pub mod config;
 pub mod error;
 pub mod foundry;
 pub mod hardhat;
@@ -17,6 +18,7 @@ pub(crate) mod js_text;
 pub mod layout;
 pub mod truffle;
 
+pub use config::{load_project_config, ProjectConfig};
 pub use error::ProjectError;
 pub use foundry::{
     parse_foundry_config, parse_foundry_toml, parse_remappings_str, parse_remappings_txt,
