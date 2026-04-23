@@ -16,12 +16,14 @@ basilisk-cache = { path = "crates/cache", version = "0.1.0" }
 basilisk-core = { path = "crates/core", version = "0.1.0" }
 basilisk-explorers = { path = "crates/explorers", version = "0.1.0" }
 basilisk-logging = { path = "crates/logging", version = "0.1.0" }
+basilisk-onchain = { path = "crates/onchain", version = "0.1.0" }
 basilisk-rpc = { path = "crates/rpc", version = "0.1.0" }
 
 # External
 alloy-primitives = { version = "0.8", features = ["serde"] }
 alloy-provider = { version = "0.8" }
 alloy-rpc-types-eth = { version = "0.8" }
+alloy-sol-types = { version = "0.8" }
 alloy-transport-http = { version = "0.8", features = ["reqwest", "reqwest-rustls-tls"] }
 anyhow = "1.0"
 async-trait = "0.1"
