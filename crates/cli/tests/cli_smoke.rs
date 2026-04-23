@@ -130,3 +130,64 @@ fn cache_show_missing_entry_prints_no_entry() {
         .success()
         .stdout(contains("no entry"));
 }
+
+// --- `audit cache repos` ------------------------------------------------------
+
+#[test]
+fn cache_repos_help_lists_stats_list_clear() {
+    audit()
+        .args(["cache", "repos", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("stats"))
+        .stdout(contains("list"))
+        .stdout(contains("clear"));
+}
+
+#[test]
+fn cache_repos_stats_empty_cache_says_so() {
+    let scratch = TempDir::new().unwrap();
+    audit_isolated(&scratch)
+        .args([
+            "cache",
+            "repos",
+            "--cache-dir",
+            scratch.path().to_str().unwrap(),
+            "stats",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("empty"));
+}
+
+#[test]
+fn cache_repos_list_empty_cache_says_so() {
+    let scratch = TempDir::new().unwrap();
+    audit_isolated(&scratch)
+        .args([
+            "cache",
+            "repos",
+            "--cache-dir",
+            scratch.path().to_str().unwrap(),
+            "list",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("empty"));
+}
+
+#[test]
+fn cache_repos_clear_empty_cache_reports_zero_bytes_freed() {
+    let scratch = TempDir::new().unwrap();
+    audit_isolated(&scratch)
+        .args([
+            "cache",
+            "repos",
+            "--cache-dir",
+            scratch.path().to_str().unwrap(),
+            "clear",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("0 B"));
+}

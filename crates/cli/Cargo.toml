@@ -18,6 +18,7 @@ path = "src/main.rs"
 [dependencies]
 basilisk-cache = { workspace = true }
 basilisk-core = { workspace = true }
+basilisk-git = { workspace = true }
 basilisk-logging = { workspace = true }
 basilisk-onchain = { workspace = true }
 
