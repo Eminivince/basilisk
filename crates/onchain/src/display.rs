@@ -7,6 +7,7 @@ use basilisk_explorers::ExplorerOutcome;
 use crate::{
     proxy::{ProxyInfo, ProxyKind},
     resolved::ResolvedContract,
+    system::ResolvedSystem,
 };
 
 impl fmt::Display for ResolvedContract {
@@ -141,5 +142,82 @@ fn outcome_label(o: &ExplorerOutcome) -> String {
         ExplorerOutcome::NetworkError(_) => "network-error".into(),
         ExplorerOutcome::RateLimited => "rate-limited".into(),
         ExplorerOutcome::Other(_) => "other".into(),
+    }
+}
+
+impl fmt::Display for ResolvedSystem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let counts = self.graph.edge_counts();
+        writeln!(
+            f,
+            "System resolved from {} on {} (id {})",
+            self.root,
+            self.chain,
+            self.chain.chain_id()
+        )?;
+        writeln!(
+            f,
+            "  Contracts: {} resolved, {} failed",
+            self.stats.contracts_resolved,
+            self.stats.contracts_failed.len(),
+        )?;
+        writeln!(
+            f,
+            "  Graph edges: {} ({} ProxiesTo, {} FacetOf, {} Historical, {} StorageRef, {} BytecodeRef, {} ImmutableRef)",
+            counts.total(),
+            counts.proxies_to,
+            counts.facet_of,
+            counts.historical_implementation,
+            counts.references_via_storage,
+            counts.references_via_bytecode,
+            counts.references_via_immutable,
+        )?;
+        writeln!(f, "  Duration: {:.2}s", self.stats.duration.as_secs_f64())?;
+        for reason in &self.stats.expansion_truncated {
+            match reason {
+                crate::TruncationReason::MaxDepthReached { at_address, depth } => {
+                    writeln!(
+                        f,
+                        "  Truncation: max-depth reached at {at_address} (depth {depth})"
+                    )?;
+                }
+                crate::TruncationReason::MaxContractsReached { last_attempted } => {
+                    writeln!(
+                        f,
+                        "  Truncation: max-contracts reached (last attempted {last_attempted})"
+                    )?;
+                }
+                crate::TruncationReason::MaxTimeReached => {
+                    writeln!(f, "  Truncation: max-duration reached")?;
+                }
+            }
+        }
+        if !self.stats.contracts_failed.is_empty() {
+            writeln!(f, "  Failures:")?;
+            for failure in &self.stats.contracts_failed {
+                writeln!(f, "    {}: {}", failure.address, failure.error)?;
+            }
+        }
+        writeln!(f)?;
+
+        // Root first, then others alphabetically. Write each as a block.
+        let mut first = true;
+        if let Some(root) = self.contracts.get(&self.root) {
+            writeln!(f, "Contract {} (root)", root.address)?;
+            render(root, f, 0)?;
+            first = false;
+        }
+        for (addr, contract) in &self.contracts {
+            if *addr == self.root {
+                continue;
+            }
+            if !first {
+                writeln!(f)?;
+            }
+            writeln!(f, "Contract {addr}")?;
+            render(contract, f, 0)?;
+            first = false;
+        }
+        Ok(())
     }
 }

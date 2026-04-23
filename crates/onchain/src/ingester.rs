@@ -234,6 +234,288 @@ impl OnchainIngester {
             referenced_addresses: Vec::new(),
         })
     }
+
+    /// Resolve a single contract with every CP5-7 enrichment turned on
+    /// according to `limits`. Does **not** recurse into implementations
+    /// or referenced addresses — that's the system orchestrator's job.
+    #[allow(clippy::too_many_lines)] // Enrichment phases are tightly coupled; splitting each into
+    // its own helper would just route-through control without clarifying anything.
+    pub async fn resolve_full(
+        &self,
+        address: Address,
+        limits: &crate::ExpansionLimits,
+    ) -> Result<ResolvedContract, IngestError> {
+        // Start from the Set-3 single-contract resolve with depth >= MAX_DEPTH
+        // so the one-hop impl recursion is suppressed.
+        let deadline = Instant::now() + self.timeout;
+        let mut resolved = self.resolve_at_depth(address, deadline, MAX_DEPTH).await?;
+        if !resolved.is_contract {
+            return Ok(resolved);
+        }
+
+        // History — only for proxies.
+        if limits.fetch_history {
+            if let Some(proxy) = resolved.proxy.as_mut() {
+                let head = self.rpc.get_block_number().await.unwrap_or(0);
+                match crate::history::fetch_upgrade_history(
+                    self.rpc.as_ref(),
+                    address,
+                    limits.history_from_block,
+                    head,
+                )
+                .await
+                {
+                    Ok(events) => proxy.upgrade_history = events,
+                    Err(e) => {
+                        resolved
+                            .resolution
+                            .proxy_detection_notes
+                            .push(format!("upgrade-history fetch failed: {e}"));
+                    }
+                }
+            }
+        }
+
+        // Constructor args.
+        if limits.fetch_constructor_args {
+            match crate::constructor::recover_constructor_args(
+                self.rpc.as_ref(),
+                self.explorers.as_ref(),
+                &self.chain,
+                address,
+                &resolved.bytecode,
+            )
+            .await
+            {
+                Ok(args) => resolved.constructor_args = args,
+                Err(e) => {
+                    resolved
+                        .resolution
+                        .proxy_detection_notes
+                        .push(format!("constructor-args recovery failed: {e}"));
+                }
+            }
+        }
+
+        // Storage layout (currently stubbed — returns None).
+        if limits.fetch_storage_layout {
+            if let Some(src) = &resolved.source {
+                match crate::storage_layout::recover_storage_layout(src).await {
+                    Ok(layout) => resolved.storage_layout = layout,
+                    Err(e) => {
+                        resolved
+                            .resolution
+                            .proxy_detection_notes
+                            .push(format!("storage-layout recovery failed: {e}"));
+                    }
+                }
+            }
+        }
+
+        // Reference extraction: storage / bytecode / source.
+        let mut refs = Vec::new();
+        if limits.expand_storage {
+            match crate::references::scan_storage_for_addresses(
+                self.rpc.as_ref(),
+                address,
+                limits.storage_scan_depth,
+            )
+            .await
+            {
+                Ok(r) => refs.extend(r),
+                Err(e) => {
+                    resolved
+                        .resolution
+                        .proxy_detection_notes
+                        .push(format!("storage scan failed: {e}"));
+                }
+            }
+        }
+        if limits.expand_bytecode {
+            let candidates =
+                crate::references::scan_bytecode_for_addresses(resolved.bytecode.as_ref());
+            match crate::references::verify_bytecode_address_references(
+                self.rpc.as_ref(),
+                candidates,
+            )
+            .await
+            {
+                Ok(r) => refs.extend(r),
+                Err(e) => {
+                    resolved
+                        .resolution
+                        .proxy_detection_notes
+                        .push(format!("bytecode scan failed: {e}"));
+                }
+            }
+        }
+        if limits.expand_immutables {
+            if let Some(src) = &resolved.source {
+                refs.extend(crate::references::extract_immutable_addresses(src));
+            }
+        }
+        resolved.referenced_addresses = refs;
+        Ok(resolved)
+    }
+
+    /// BFS from `root`, enriching every reachable contract and building
+    /// a typed graph of how they relate. Every contract reachable within
+    /// `limits.max_depth` / `max_contracts` / `max_duration` lands in
+    /// the returned `ResolvedSystem.contracts` map.
+    #[allow(clippy::too_many_lines)]
+    pub async fn resolve_system(
+        &self,
+        root: alloy_primitives::Address,
+        limits: crate::ExpansionLimits,
+    ) -> Result<crate::ResolvedSystem, IngestError> {
+        let start = Instant::now();
+        let mut contracts = std::collections::BTreeMap::new();
+        let mut graph = basilisk_graph::ContractGraph::new();
+        let mut visited = std::collections::BTreeSet::new();
+        let mut queue: std::collections::VecDeque<(alloy_primitives::Address, usize)> =
+            std::collections::VecDeque::new();
+        queue.push_back((root, 0));
+        let mut stats = crate::SystemResolutionStats {
+            duration: Duration::default(),
+            ..Default::default()
+        };
+
+        while let Some((addr, depth)) = queue.pop_front() {
+            if contracts.len() >= limits.max_contracts {
+                stats
+                    .expansion_truncated
+                    .push(crate::TruncationReason::MaxContractsReached {
+                        last_attempted: addr,
+                    });
+                break;
+            }
+            if start.elapsed() >= limits.max_duration {
+                stats
+                    .expansion_truncated
+                    .push(crate::TruncationReason::MaxTimeReached);
+                break;
+            }
+            if !visited.insert(addr) {
+                continue;
+            }
+
+            let resolved = match self.resolve_full(addr, &limits).await {
+                Ok(r) => r,
+                Err(e) => {
+                    stats.contracts_failed.push(crate::FailedResolution {
+                        address: addr,
+                        reached_via: Vec::new(),
+                        error: e.to_string(),
+                    });
+                    continue;
+                }
+            };
+            graph.add_node(addr);
+
+            // If we've already hit max depth, don't enqueue anything further.
+            let at_max_depth = depth >= limits.max_depth;
+            if at_max_depth {
+                stats
+                    .expansion_truncated
+                    .push(crate::TruncationReason::MaxDepthReached {
+                        at_address: addr,
+                        depth,
+                    });
+            }
+
+            // Proxy edges.
+            if let Some(proxy) = &resolved.proxy {
+                if let Some(impl_addr) = proxy.implementation_address {
+                    graph.add_edge(basilisk_graph::GraphEdge {
+                        from: addr,
+                        to: impl_addr,
+                        kind: basilisk_graph::EdgeKind::ProxiesTo,
+                    });
+                    if !at_max_depth && !visited.contains(&impl_addr) {
+                        queue.push_back((impl_addr, depth + 1));
+                    }
+                }
+                if let Some(admin) = proxy.admin_address {
+                    graph.add_edge(basilisk_graph::GraphEdge {
+                        from: addr,
+                        to: admin,
+                        kind: basilisk_graph::EdgeKind::AdminOf,
+                    });
+                }
+                if let Some(beacon) = proxy.beacon_address {
+                    graph.add_edge(basilisk_graph::GraphEdge {
+                        from: addr,
+                        to: beacon,
+                        kind: basilisk_graph::EdgeKind::BeaconOf,
+                    });
+                    if !at_max_depth && !visited.contains(&beacon) {
+                        queue.push_back((beacon, depth + 1));
+                    }
+                }
+                for facet in &proxy.facets {
+                    graph.add_edge(basilisk_graph::GraphEdge {
+                        from: addr,
+                        to: facet.facet_address,
+                        kind: basilisk_graph::EdgeKind::FacetOf,
+                    });
+                    if !at_max_depth && !visited.contains(&facet.facet_address) {
+                        queue.push_back((facet.facet_address, depth + 1));
+                    }
+                }
+                // History events — edges only, don't chase historical impls deeper.
+                for event in &proxy.upgrade_history {
+                    graph.add_edge(basilisk_graph::GraphEdge {
+                        from: addr,
+                        to: event.new_implementation,
+                        kind: basilisk_graph::EdgeKind::HistoricalImplementation {
+                            block: event.block_number,
+                            tx_hash: event.tx_hash,
+                        },
+                    });
+                }
+            }
+
+            // Address references (storage / bytecode / source).
+            for r in &resolved.referenced_addresses {
+                if r.address == alloy_primitives::Address::ZERO {
+                    continue; // immutables we couldn't materialize
+                }
+                let kind = match &r.source {
+                    crate::ReferenceSource::Storage { slot } => {
+                        basilisk_graph::EdgeKind::ReferencesViaStorage { slot: *slot }
+                    }
+                    crate::ReferenceSource::Bytecode { offset } => {
+                        basilisk_graph::EdgeKind::ReferencesViaBytecode { offset: *offset }
+                    }
+                    crate::ReferenceSource::Immutable { name }
+                    | crate::ReferenceSource::VerifiedConstant { name } => {
+                        basilisk_graph::EdgeKind::ReferencesViaImmutable { name: name.clone() }
+                    }
+                };
+                graph.add_edge(basilisk_graph::GraphEdge {
+                    from: addr,
+                    to: r.address,
+                    kind,
+                });
+                if !at_max_depth && !visited.contains(&r.address) {
+                    queue.push_back((r.address, depth + 1));
+                }
+            }
+
+            contracts.insert(addr, resolved);
+        }
+
+        stats.contracts_resolved = contracts.len();
+        stats.duration = start.elapsed();
+        Ok(crate::ResolvedSystem {
+            root,
+            chain: self.chain.clone(),
+            contracts,
+            graph,
+            stats,
+            resolved_at: SystemTime::now(),
+        })
+    }
 }
 
 fn remaining(deadline: Instant) -> Duration {
@@ -474,5 +756,165 @@ mod tests {
         assert_eq!(round.address, resolved.address);
         assert_eq!(round.is_contract, resolved.is_contract);
         assert_eq!(round.bytecode_hash, resolved.bytecode_hash);
+    }
+
+    fn build_limits() -> crate::ExpansionLimits {
+        crate::ExpansionLimits {
+            max_depth: 2,
+            max_contracts: 10,
+            max_duration: Duration::from_secs(30),
+            expand_storage: true,
+            expand_bytecode: false, // noise in tests
+            expand_immutables: false,
+            fetch_history: false,
+            fetch_constructor_args: false,
+            fetch_storage_layout: false,
+            storage_scan_depth: 4,
+            history_from_block: 0,
+            parallelism: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_system_single_contract() {
+        let rpc: Arc<dyn RpcProvider> = Arc::new(
+            MemoryProvider::new(Chain::EthereumMainnet).with_code(contract(), runtime_bytecode()),
+        );
+        let explorers = ExplorerChain::new_uncached(vec![]);
+        let ingester = build_ingester(rpc, explorers);
+        let system = ingester
+            .resolve_system(contract(), build_limits())
+            .await
+            .unwrap();
+        assert_eq!(system.root, contract());
+        assert_eq!(system.contracts.len(), 1);
+        assert_eq!(system.stats.contracts_resolved, 1);
+        assert!(system.stats.contracts_failed.is_empty());
+        assert_eq!(system.graph.edge_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn resolve_system_expands_proxy_to_impl() {
+        let rpc: Arc<dyn RpcProvider> = Arc::new(
+            MemoryProvider::new(Chain::EthereumMainnet)
+                .with_code(contract(), runtime_bytecode())
+                .with_code(impl_addr(), alloy_primitives::Bytes::from_static(&[0xab]))
+                .with_slot(
+                    contract(),
+                    slots::IMPLEMENTATION_SLOT,
+                    slot_for(impl_addr()),
+                ),
+        );
+        let explorers = ExplorerChain::new_uncached(vec![]);
+        let ingester = build_ingester(rpc, explorers);
+        let system = ingester
+            .resolve_system(contract(), build_limits())
+            .await
+            .unwrap();
+        assert_eq!(system.contracts.len(), 2);
+        let counts = system.graph.edge_counts();
+        assert_eq!(counts.proxies_to, 1);
+    }
+
+    #[tokio::test]
+    async fn resolve_system_truncates_at_max_contracts() {
+        // 4 contracts linked via storage slot 0; limits cap at 2.
+        let a = Address::from([1u8; 20]);
+        let b = Address::from([2u8; 20]);
+        let c = Address::from([3u8; 20]);
+        let d = Address::from([4u8; 20]);
+        let rpc: Arc<dyn RpcProvider> = Arc::new(
+            MemoryProvider::new(Chain::EthereumMainnet)
+                .with_code(a, runtime_bytecode())
+                .with_code(b, runtime_bytecode())
+                .with_code(c, runtime_bytecode())
+                .with_code(d, runtime_bytecode())
+                .with_slot(a, B256::ZERO, slot_for(b))
+                .with_slot(b, B256::ZERO, slot_for(c))
+                .with_slot(c, B256::ZERO, slot_for(d)),
+        );
+        let explorers = ExplorerChain::new_uncached(vec![]);
+        let ingester = build_ingester(rpc, explorers);
+        let mut limits = build_limits();
+        limits.max_contracts = 2;
+        let system = ingester.resolve_system(a, limits).await.unwrap();
+        assert_eq!(system.contracts.len(), 2);
+        assert!(system
+            .stats
+            .expansion_truncated
+            .iter()
+            .any(|t| matches!(t, crate::TruncationReason::MaxContractsReached { .. })));
+    }
+
+    #[tokio::test]
+    async fn resolve_system_records_max_depth_truncation() {
+        // Root references another contract via storage, max_depth = 0.
+        let rpc: Arc<dyn RpcProvider> = Arc::new(
+            MemoryProvider::new(Chain::EthereumMainnet)
+                .with_code(contract(), runtime_bytecode())
+                .with_code(impl_addr(), runtime_bytecode())
+                .with_slot(contract(), B256::ZERO, slot_for(impl_addr())),
+        );
+        let explorers = ExplorerChain::new_uncached(vec![]);
+        let ingester = build_ingester(rpc, explorers);
+        let mut limits = build_limits();
+        limits.max_depth = 0;
+        let system = ingester.resolve_system(contract(), limits).await.unwrap();
+        // Root only — the referenced contract isn't enqueued past depth 0.
+        assert_eq!(system.contracts.len(), 1);
+        assert!(system
+            .stats
+            .expansion_truncated
+            .iter()
+            .any(|t| matches!(t, crate::TruncationReason::MaxDepthReached { .. })));
+    }
+
+    #[tokio::test]
+    async fn resolve_system_display_shows_counts_and_blocks() {
+        let rpc: Arc<dyn RpcProvider> = Arc::new(
+            MemoryProvider::new(Chain::EthereumMainnet)
+                .with_code(contract(), runtime_bytecode())
+                .with_code(impl_addr(), runtime_bytecode())
+                .with_slot(
+                    contract(),
+                    slots::IMPLEMENTATION_SLOT,
+                    slot_for(impl_addr()),
+                ),
+        );
+        let explorers = ExplorerChain::new_uncached(vec![]);
+        let ingester = build_ingester(rpc, explorers);
+        let system = ingester
+            .resolve_system(contract(), build_limits())
+            .await
+            .unwrap();
+        let pretty = system.to_string();
+        assert!(pretty.contains("System resolved from"));
+        assert!(pretty.contains("Graph edges:"));
+        assert!(pretty.contains("Contract "));
+        assert!(pretty.contains("(root)"));
+    }
+
+    #[tokio::test]
+    async fn resolve_system_dot_export_contains_nodes() {
+        let rpc: Arc<dyn RpcProvider> = Arc::new(
+            MemoryProvider::new(Chain::EthereumMainnet)
+                .with_code(contract(), runtime_bytecode())
+                .with_code(impl_addr(), runtime_bytecode())
+                .with_slot(
+                    contract(),
+                    slots::IMPLEMENTATION_SLOT,
+                    slot_for(impl_addr()),
+                ),
+        );
+        let explorers = ExplorerChain::new_uncached(vec![]);
+        let ingester = build_ingester(rpc, explorers);
+        let system = ingester
+            .resolve_system(contract(), build_limits())
+            .await
+            .unwrap();
+        let dot = system.graph.to_dot();
+        assert!(dot.starts_with("digraph G {"));
+        assert!(dot.contains(&contract().to_string()));
+        assert!(dot.contains("ProxiesTo"));
     }
 }
