@@ -12,6 +12,7 @@ authors = ["Basilisk Contributors"]
 
 [workspace.dependencies]
 # Internal crates
+basilisk-agent = { path = "crates/agent", version = "0.1.0" }
 basilisk-cache = { path = "crates/cache", version = "0.1.0" }
 basilisk-core = { path = "crates/core", version = "0.1.0" }
 basilisk-explorers = { path = "crates/explorers", version = "0.1.0" }

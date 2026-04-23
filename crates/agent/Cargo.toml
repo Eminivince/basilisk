@@ -1,0 +1,34 @@
+[package]
+name = "basilisk-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "LLM-driven agent loop, tool definitions, session management for Basilisk."
+
+[lints]
+workspace = true
+
+[dependencies]
+basilisk-core = { workspace = true }
+basilisk-explorers = { workspace = true }
+basilisk-git = { workspace = true }
+basilisk-github = { workspace = true }
+basilisk-llm = { workspace = true }
+basilisk-onchain = { workspace = true }
+basilisk-project = { workspace = true }
+basilisk-rpc = { workspace = true }
+
+alloy-primitives = { workspace = true }
+async-trait = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
