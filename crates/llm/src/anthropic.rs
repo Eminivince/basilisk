@@ -1,25 +1,27 @@
 //! Anthropic Messages API backend.
 //!
-//! Covers non-streaming `complete`. Streaming lands in CP2.
+//! Covers both buffered `complete` and streaming `stream` paths.
 //!
 //! Wire format is intentionally hand-rolled (not `anthropic-sdk` or
 //! similar) so we keep a thin, auditable dependency footprint — the
-//! only external is `reqwest`. The public-facing types from
-//! [`crate::types`] are mapped into on-wire `Wire*` shapes at the
+//! only externals are `reqwest` and `futures`. The public-facing types
+//! from [`crate::types`] are mapped into on-wire `Wire*` shapes at the
 //! boundary; the public surface doesn't leak any provider specifics.
 
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     backend::LlmBackend,
     error::LlmError,
+    sse::{SseDecoder, SseFrame},
     types::{
-        CompletionRequest, CompletionResponse, ContentBlock, Message, MessageRole, StopReason,
-        TokenUsage, ToolChoice, ToolDefinition,
+        BlockType, CompletionRequest, CompletionResponse, CompletionStream, ContentBlock, Delta,
+        Message, MessageRole, StopReason, StreamEvent, TokenUsage, ToolChoice, ToolDefinition,
     },
 };
 
@@ -122,8 +124,11 @@ impl LlmBackend for AnthropicBackend {
         &self.inner.identifier
     }
 
+    /// Buffered response. Issues a non-streaming POST so the usage
+    /// accounting matches Anthropic's `Message` response shape exactly
+    /// (simpler than folding the stream for small/test requests).
     async fn complete(&self, request: CompletionRequest) -> Result<CompletionResponse, LlmError> {
-        let body = build_request_body(&self.inner.model, &request);
+        let body = build_request_body(&self.inner.model, &request, false);
         let url = format!("{}/v1/messages", self.inner.base);
         let response = self
             .inner
@@ -148,6 +153,238 @@ impl LlmBackend for AnthropicBackend {
             .map_err(|e| LlmError::ParseError(e.to_string()))?;
         parse_response(wire)
     }
+
+    async fn stream(&self, request: CompletionRequest) -> Result<CompletionStream, LlmError> {
+        let body = build_request_body(&self.inner.model, &request, true);
+        let url = format!("{}/v1/messages", self.inner.base);
+        let response = self
+            .inner
+            .client
+            .post(&url)
+            .header("x-api-key", self.inner.api_key.as_ref())
+            .header("anthropic-version", API_VERSION)
+            .header("accept", "text/event-stream")
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(classify_reqwest_error)?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(map_http_error(status, response).await);
+        }
+
+        Ok(Box::pin(stream_events(response)))
+    }
+}
+
+/// State the `stream_events` unfolder carries across polls.
+///
+/// `pending` is the queue of events already decoded but not yet yielded;
+/// we yield from the queue before pulling more bytes. `done` short-
+/// circuits after a terminal error.
+struct EventStreamState {
+    bytes: futures::stream::BoxStream<'static, Result<bytes::Bytes, reqwest::Error>>,
+    decoder: SseDecoder,
+    pending: std::collections::VecDeque<Result<StreamEvent, LlmError>>,
+    done: bool,
+}
+
+/// Wrap a streaming HTTP response in a stream of decoded
+/// [`StreamEvent`]s. Heartbeat / unknown SSE frames are filtered out.
+fn stream_events(
+    response: reqwest::Response,
+) -> impl futures::Stream<Item = Result<StreamEvent, LlmError>> + Send + 'static {
+    let bytes: futures::stream::BoxStream<'static, _> = Box::pin(response.bytes_stream());
+    let state = EventStreamState {
+        bytes,
+        decoder: SseDecoder::new(),
+        pending: std::collections::VecDeque::new(),
+        done: false,
+    };
+    futures::stream::unfold(state, |mut s| async move {
+        loop {
+            if let Some(next) = s.pending.pop_front() {
+                if next.is_err() {
+                    s.done = true;
+                }
+                return Some((next, s));
+            }
+            if s.done {
+                return None;
+            }
+            match s.bytes.next().await {
+                None => return None,
+                Some(Err(e)) => {
+                    return Some((Err(classify_reqwest_error(e)), {
+                        s.done = true;
+                        s
+                    }))
+                }
+                Some(Ok(chunk)) => {
+                    let frames = match s.decoder.push_bytes(&chunk) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            return Some((Err(e), {
+                                s.done = true;
+                                s
+                            }))
+                        }
+                    };
+                    for frame in frames {
+                        match frame_to_event(&frame) {
+                            Ok(Some(ev)) => s.pending.push_back(Ok(ev)),
+                            Ok(None) => {}
+                            Err(e) => s.pending.push_back(Err(e)),
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Convert one parsed SSE frame into a [`StreamEvent`]. Returns `Ok(None)`
+/// for frames we deliberately drop (heartbeats, unknown types).
+fn frame_to_event(frame: &SseFrame) -> Result<Option<StreamEvent>, LlmError> {
+    // Anthropic sends `event: ping` heartbeats — skip them. An explicit
+    // `event: error` delivers an error payload inline.
+    match frame.event.as_deref() {
+        Some("ping") => return Ok(None),
+        Some("error") => {
+            return Err(LlmError::ServerError {
+                status: 0,
+                body: frame.data.clone(),
+            });
+        }
+        _ => {}
+    }
+
+    let value: serde_json::Value = serde_json::from_str(&frame.data)
+        .map_err(|e| LlmError::ParseError(format!("SSE data JSON: {e}")))?;
+    let kind = value
+        .get("type")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| LlmError::ParseError("SSE data missing `type`".into()))?;
+
+    match kind {
+        "message_start" => {
+            let model = value
+                .pointer("/message/model")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            Ok(Some(StreamEvent::MessageStart { model }))
+        }
+        "content_block_start" => {
+            let index = read_index(&value)?;
+            let block_obj = value.get("content_block").cloned().unwrap_or_default();
+            let block = parse_block_type(&block_obj)?;
+            Ok(Some(StreamEvent::ContentBlockStart { index, block }))
+        }
+        "content_block_delta" => {
+            let index = read_index(&value)?;
+            let delta_obj = value.get("delta").cloned().unwrap_or_default();
+            let delta = parse_delta(&delta_obj)?;
+            Ok(Some(StreamEvent::ContentBlockDelta { index, delta }))
+        }
+        "content_block_stop" => {
+            let index = read_index(&value)?;
+            Ok(Some(StreamEvent::ContentBlockStop { index }))
+        }
+        "message_delta" => {
+            let stop_reason = value
+                .pointer("/delta/stop_reason")
+                .and_then(|v| v.as_str())
+                .map(|s| parse_stop_reason(s, &value))
+                .transpose()?;
+            let usage = value
+                .get("usage")
+                .and_then(|v| serde_json::from_value::<WireUsage>(v.clone()).ok())
+                .map(|u| TokenUsage {
+                    input_tokens: u.input_tokens,
+                    output_tokens: u.output_tokens,
+                    cache_read_input_tokens: u.cache_read_input_tokens,
+                    cache_creation_input_tokens: u.cache_creation_input_tokens,
+                });
+            Ok(Some(StreamEvent::MessageDelta { stop_reason, usage }))
+        }
+        "message_stop" => Ok(Some(StreamEvent::MessageStop)),
+        _ => Ok(None), // Forward-compat: skip event types we don't recognise.
+    }
+}
+
+fn read_index(v: &serde_json::Value) -> Result<u32, LlmError> {
+    v.get("index")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|n| u32::try_from(n).ok())
+        .ok_or_else(|| LlmError::ParseError("SSE frame missing `index`".into()))
+}
+
+fn parse_block_type(v: &serde_json::Value) -> Result<BlockType, LlmError> {
+    let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    match kind {
+        "text" => Ok(BlockType::Text),
+        "tool_use" => {
+            let id = v
+                .get("id")
+                .and_then(|x| x.as_str())
+                .ok_or_else(|| LlmError::ParseError("tool_use block missing id".into()))?
+                .to_string();
+            let name = v
+                .get("name")
+                .and_then(|x| x.as_str())
+                .ok_or_else(|| LlmError::ParseError("tool_use block missing name".into()))?
+                .to_string();
+            Ok(BlockType::ToolUse { id, name })
+        }
+        other => Err(LlmError::ParseError(format!(
+            "unknown content_block type: {other}"
+        ))),
+    }
+}
+
+fn parse_delta(v: &serde_json::Value) -> Result<Delta, LlmError> {
+    let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    match kind {
+        "text_delta" => {
+            let text = v
+                .get("text")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string();
+            Ok(Delta::TextDelta(text))
+        }
+        "input_json_delta" => {
+            let partial = v
+                .get("partial_json")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string();
+            Ok(Delta::InputJsonDelta(partial))
+        }
+        other => Err(LlmError::ParseError(format!("unknown delta type: {other}"))),
+    }
+}
+
+fn parse_stop_reason(tag: &str, full: &serde_json::Value) -> Result<StopReason, LlmError> {
+    match tag {
+        "end_turn" => Ok(StopReason::EndTurn),
+        "max_tokens" => Ok(StopReason::MaxTokens),
+        "tool_use" => Ok(StopReason::ToolUse),
+        "stop_sequence" => {
+            let sequence = full
+                .pointer("/delta/stop_sequence")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            Ok(StopReason::StopSequence { sequence })
+        }
+        other => Err(LlmError::ParseError(format!(
+            "unknown stop_reason: {other}"
+        ))),
+    }
 }
 
 // --- wire types ---------------------------------------------------------
@@ -170,6 +407,8 @@ struct WireRequest<'a> {
     tool_choice: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     stop_sequences: Vec<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    stream: bool,
 }
 
 #[derive(Serialize)]
@@ -233,7 +472,7 @@ struct WireUsage {
 /// Build the JSON body sent to `/v1/messages`.
 ///
 /// Split out so tests can assert the wire shape without hitting the network.
-fn build_request_body(model: &str, req: &CompletionRequest) -> serde_json::Value {
+fn build_request_body(model: &str, req: &CompletionRequest, stream: bool) -> serde_json::Value {
     let system = if req.system.is_empty() {
         None
     } else if req.cache_system_prompt {
@@ -272,6 +511,7 @@ fn build_request_body(model: &str, req: &CompletionRequest) -> serde_json::Value
         tools,
         tool_choice,
         stop_sequences: req.stop_sequences.clone(),
+        stream,
     };
 
     serde_json::to_value(&wire).expect("WireRequest serialises")
@@ -443,7 +683,7 @@ mod tests {
 
     #[test]
     fn request_body_has_required_top_level_fields() {
-        let body = build_request_body("claude-opus-4-7", &sample_request());
+        let body = build_request_body("claude-opus-4-7", &sample_request(), false);
         assert_eq!(body["model"], "claude-opus-4-7");
         assert_eq!(body["max_tokens"], 100);
         // `0.2_f32` is not exactly representable — compare as f64 with epsilon.
@@ -455,7 +695,7 @@ mod tests {
 
     #[test]
     fn request_body_encodes_user_text_block() {
-        let body = build_request_body("claude-opus-4-7", &sample_request());
+        let body = build_request_body("claude-opus-4-7", &sample_request(), false);
         let msg = &body["messages"][0];
         assert_eq!(msg["role"], "user");
         assert_eq!(msg["content"][0]["type"], "text");
@@ -491,7 +731,7 @@ mod tests {
             stop_sequences: vec![],
             cache_system_prompt: false,
         };
-        let body = build_request_body("claude-opus-4-7", &req);
+        let body = build_request_body("claude-opus-4-7", &req, false);
         // No system in body when empty.
         assert!(body.get("system").is_none());
         let assistant = &body["messages"][0];
@@ -524,7 +764,7 @@ mod tests {
             stop_sequences: vec![],
             cache_system_prompt: false,
         };
-        let body = build_request_body("m", &req);
+        let body = build_request_body("m", &req, false);
         assert_eq!(body["messages"][0]["content"][0]["is_error"], true);
     }
 
@@ -532,7 +772,7 @@ mod tests {
     fn request_body_caches_system_prompt_when_flag_set() {
         let mut req = sample_request();
         req.cache_system_prompt = true;
-        let body = build_request_body("claude-opus-4-7", &req);
+        let body = build_request_body("claude-opus-4-7", &req, false);
         let system = &body["system"];
         assert!(system.is_array(), "expected array, got {system}");
         assert_eq!(system[0]["type"], "text");
@@ -551,7 +791,7 @@ mod tests {
                 "properties": { "a": {"type": "number"}, "b": {"type": "number"} },
             }),
         });
-        let body = build_request_body("m", &req);
+        let body = build_request_body("m", &req, false);
         assert_eq!(body["tools"][0]["name"], "add");
         assert_eq!(body["tools"][0]["description"], "add two numbers");
         assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
@@ -571,7 +811,7 @@ mod tests {
         for (choice, expected) in cases {
             let mut req = sample_request();
             req.tool_choice = choice;
-            let body = build_request_body("m", &req);
+            let body = build_request_body("m", &req, false);
             assert_eq!(body["tool_choice"], expected);
         }
     }
@@ -580,7 +820,7 @@ mod tests {
     fn request_body_empty_system_is_omitted() {
         let mut req = sample_request();
         req.system = String::new();
-        let body = build_request_body("m", &req);
+        let body = build_request_body("m", &req, false);
         assert!(body.get("system").is_none());
     }
 

@@ -19,13 +19,14 @@ pub mod anthropic;
 pub mod backend;
 pub mod error;
 pub mod pricing;
+pub(crate) mod sse;
 pub mod types;
 
 pub use anthropic::{AnthropicBackend, DEFAULT_MODEL};
-pub use backend::LlmBackend;
+pub use backend::{collect_stream, LlmBackend};
 pub use error::LlmError;
 pub use pricing::{ModelPricing, PricingTable};
 pub use types::{
-    CompletionRequest, CompletionResponse, ContentBlock, Message, MessageRole, StopReason,
-    TokenUsage, ToolChoice, ToolDefinition,
+    BlockType, CompletionRequest, CompletionResponse, CompletionStream, ContentBlock, Delta,
+    Message, MessageRole, StopReason, StreamEvent, TokenUsage, ToolChoice, ToolDefinition,
 };

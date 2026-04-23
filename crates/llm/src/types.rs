@@ -4,7 +4,12 @@
 //! the first backend. Other providers (`OpenAI`, local) get shimmed at
 //! their backend's boundary — this crate keeps one canonical vocabulary.
 
+use std::pin::Pin;
+
+use futures::Stream;
 use serde::{Deserialize, Serialize};
+
+use crate::error::LlmError;
 
 /// One full completion request.
 ///
@@ -175,6 +180,62 @@ fn sum_opt(a: Option<u32>, b: Option<u32>) -> Option<u32> {
         (None, None) => None,
         (x, y) => Some(x.unwrap_or(0).saturating_add(y.unwrap_or(0))),
     }
+}
+
+// --- streaming ---------------------------------------------------------
+//
+// The type aliases below compose with `futures::Stream` so callers can
+// `.next()` events as they arrive. The backend produces a boxed stream;
+// callers don't need to know the concrete implementation.
+
+/// Boxed stream of streaming events. Pin + Send so callers can move it
+/// across task boundaries.
+pub type CompletionStream = Pin<Box<dyn Stream<Item = Result<StreamEvent, LlmError>> + Send>>;
+
+/// One event from a streaming completion.
+///
+/// Order: `MessageStart` → (`ContentBlockStart` → `ContentBlockDelta`\*
+/// → `ContentBlockStop`)\* → `MessageDelta` → `MessageStop`.
+/// Heartbeat `ping` events are filtered by the backend before reaching
+/// the caller.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum StreamEvent {
+    /// Fires once per message, first. Carries the model identifier.
+    MessageStart { model: String },
+    /// A new content block is starting at `index`.
+    ContentBlockStart { index: u32, block: BlockType },
+    /// Incremental delta for the block at `index`. For text blocks this
+    /// is the next chunk of text; for tool-use blocks the `input` field
+    /// is streamed as JSON fragments that must be concatenated before
+    /// deserialising.
+    ContentBlockDelta { index: u32, delta: Delta },
+    /// The block at `index` is complete.
+    ContentBlockStop { index: u32 },
+    /// Message-level delta — final `stop_reason` / `usage` land here.
+    MessageDelta {
+        stop_reason: Option<StopReason>,
+        usage: Option<TokenUsage>,
+    },
+    /// The stream has ended. No more events follow.
+    MessageStop,
+}
+
+/// What kind of content block is starting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum BlockType {
+    Text,
+    ToolUse { id: String, name: String },
+}
+
+/// Incremental content for a block-in-progress.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Delta {
+    /// Text-block delta: append to the block's text.
+    TextDelta(String),
+    /// Tool-use-block delta: append this JSON fragment. The completed
+    /// `input` is the concatenation of every `InputJsonDelta` between
+    /// the `ContentBlockStart` and `ContentBlockStop` for that block.
+    InputJsonDelta(String),
 }
 
 #[cfg(test)]
