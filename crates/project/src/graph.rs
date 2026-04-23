@@ -248,9 +248,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::{
-        config::load_project_config, layout::detect_layout, sources::enumerate_sources,
-    };
+    use crate::{config::load_project_config, layout::detect_layout, sources::enumerate_sources};
 
     fn write_sol(path: &Path, body: &str) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
