@@ -13,6 +13,7 @@
 pub mod config;
 pub mod error;
 pub mod foundry;
+pub mod graph;
 pub mod hardhat;
 pub mod imports;
 pub(crate) mod js_text;
@@ -26,6 +27,10 @@ pub use error::ProjectError;
 pub use foundry::{
     parse_foundry_config, parse_foundry_toml, parse_remappings_str, parse_remappings_txt,
     FoundryConfig, FoundryProfile, Remapping, DEFAULT_PROFILE,
+};
+pub use graph::{
+    build_import_graph, build_import_graph_for, FileImports, ImportGraph, ImportGraphStats,
+    ResolvedEdge, UnresolvedEdge,
 };
 pub use hardhat::{parse_hardhat_config, parse_hardhat_source, HardhatConfig, HardhatStyle};
 pub use imports::{
