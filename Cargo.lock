@@ -840,6 +840,7 @@ dependencies = [
  "assert_cmd",
  "basilisk-cache",
  "basilisk-core",
+ "basilisk-git",
  "basilisk-logging",
  "basilisk-onchain",
  "clap",
