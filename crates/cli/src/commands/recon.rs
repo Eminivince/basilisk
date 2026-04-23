@@ -1,11 +1,21 @@
-//! `audit recon <target>` — classify an input and, for on-chain targets,
-//! expand into a full [`basilisk_onchain::ResolvedSystem`].
+//! `audit recon <target>` — classify an input and, where possible, expand
+//! into a richer structure:
+//!   * on-chain address → [`basilisk_onchain::ResolvedSystem`]
+//!   * local path → [`basilisk_project::ResolvedProject`]
+//!   * GitHub URL → clone via [`basilisk_git::RepoCache`], then render the
+//!     working tree as a `ResolvedProject`. `--no-fetch` opts out of the
+//!     clone and just prints the classifier output.
 
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use alloy_primitives::Address;
 use anyhow::{Context, Result};
-use basilisk_core::{detect, Chain, Config, Target};
+use basilisk_core::{detect, Chain, Config, GitRef, Target};
+use basilisk_git::{CloneStrategy, FetchOptions, RepoCache};
+use basilisk_github::GithubClient;
 use basilisk_onchain::{ExpansionLimits, OnchainIngester};
 use basilisk_project::{resolve_project, ResolvedProject};
 use clap::{Args, ValueEnum};
@@ -35,6 +45,11 @@ pub struct ReconArgs {
     /// Bypass all on-disk caches for this run. Writes still land.
     #[arg(long)]
     pub no_cache: bool,
+
+    /// For GitHub targets, skip the clone and just print the classifier.
+    /// Useful for "what did this URL resolve to?" without any I/O.
+    #[arg(long)]
+    pub no_fetch: bool,
 
     /// Override the per-contract timeout (seconds).
     #[arg(long)]
@@ -96,6 +111,21 @@ pub async fn run(args: &ReconArgs, config: &Config) -> Result<()> {
         Target::LocalPath { root, .. } => {
             return resolve_local_path(root, args);
         }
+        Target::Github {
+            owner,
+            repo,
+            reference,
+            subpath,
+        } if !args.no_fetch => {
+            return fetch_and_resolve_github(
+                owner,
+                repo,
+                reference.clone(),
+                subpath.as_deref(),
+                args,
+            )
+            .await;
+        }
         _ => {}
     }
 
@@ -105,6 +135,41 @@ pub async fn run(args: &ReconArgs, config: &Config) -> Result<()> {
     }
     tracing::info!(target = ?target, "recon complete");
     Ok(())
+}
+
+async fn fetch_and_resolve_github(
+    owner: &str,
+    repo: &str,
+    reference: Option<GitRef>,
+    subpath: Option<&Path>,
+    args: &ReconArgs,
+) -> Result<()> {
+    let cache = RepoCache::open().context("opening repo cache")?;
+    let github = GithubClient::new(std::env::var("GITHUB_TOKEN").ok().as_deref())
+        .context("initializing GitHub client")?;
+    let options = FetchOptions {
+        strategy: CloneStrategy::Shallow,
+        force_refresh: args.no_cache,
+        github: Some(github),
+    };
+    let fetched = cache
+        .fetch(owner, repo, reference, options)
+        .await
+        .with_context(|| format!("fetching {owner}/{repo}"))?;
+    tracing::info!(
+        owner = owner,
+        repo = repo,
+        sha = %fetched.commit_sha,
+        cached = fetched.cached,
+        working_tree = %fetched.working_tree.display(),
+        "fetched github target",
+    );
+
+    let project_root = match subpath {
+        Some(sp) if !sp.as_os_str().is_empty() => fetched.working_tree.join(sp),
+        _ => fetched.working_tree.clone(),
+    };
+    resolve_local_path(&project_root, args)
 }
 
 fn resolve_local_path(root: &std::path::Path, args: &ReconArgs) -> Result<()> {

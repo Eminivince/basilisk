@@ -46,11 +46,14 @@ fn recon_help_lists_no_cache_and_timeout() {
 }
 
 #[test]
-fn recon_github_url_json_contains_github_and_owner() {
+fn recon_github_url_no_fetch_classifier_only() {
+    // With --no-fetch, the CLI returns the Target classifier output
+    // without cloning. This keeps the test hermetic (no network).
     audit()
         .args([
             "recon",
             "https://github.com/foundry-rs/foundry",
+            "--no-fetch",
             "--output",
             "json",
         ])
@@ -255,4 +258,27 @@ fn recon_local_path_json_output_is_valid_json() {
     assert!(v.get("root").is_some(), "json should have root: {stdout}");
     assert!(v.get("config").is_some(), "json should have config");
     assert!(v.get("graph").is_some(), "json should have graph");
+}
+
+// --- `audit recon <github-url>` (live network) ------------------------------
+
+#[test]
+#[ignore = "requires network access to github.com"]
+fn recon_github_url_live_clone_renders_project() {
+    let scratch = TempDir::new().unwrap();
+    audit_isolated(&scratch)
+        .args(["recon", "https://github.com/foundry-rs/forge-template"])
+        .assert()
+        .success()
+        .stdout(contains("Project at"))
+        .stdout(contains("kind: foundry"));
+}
+
+#[test]
+fn recon_help_lists_no_fetch_flag() {
+    audit()
+        .args(["recon", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("--no-fetch"));
 }
