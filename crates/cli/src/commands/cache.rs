@@ -201,10 +201,7 @@ fn repos_list(cache: &RepoCache) -> Result<()> {
         println!("repo cache is empty: {}", cache.root().display());
         return Ok(());
     }
-    println!(
-        "{:<40} {:<10} {:<8} cloned",
-        "owner/repo", "sha", "depth"
-    );
+    println!("{:<40} {:<10} {:<8} cloned", "owner/repo", "sha", "depth");
     println!("{:-<40} {:-<10} {:-<8} {:-<16}", "", "", "", "");
     for (owner, repo, sha, meta) in entries {
         let label = format!("{owner}/{repo}");

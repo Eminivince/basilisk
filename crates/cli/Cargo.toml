@@ -21,6 +21,7 @@ basilisk-core = { workspace = true }
 basilisk-git = { workspace = true }
 basilisk-logging = { workspace = true }
 basilisk-onchain = { workspace = true }
+basilisk-project = { workspace = true }
 
 alloy-primitives = { workspace = true }
 anyhow = { workspace = true }

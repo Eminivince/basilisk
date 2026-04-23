@@ -191,3 +191,68 @@ fn cache_repos_clear_empty_cache_reports_zero_bytes_freed() {
         .success()
         .stdout(contains("0 B"));
 }
+
+// --- `audit recon <path>` (LocalPath target) ---------------------------------
+
+fn write_sol(path: &std::path::Path, body: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, body).unwrap();
+}
+
+#[test]
+fn recon_local_foundry_project_prints_project_summary() {
+    let tmp = TempDir::new().unwrap();
+    write_sol(
+        &tmp.path().join("foundry.toml"),
+        "[profile.default]\nsrc = \"src\"\nsolc = \"0.8.20\"\n",
+    );
+    write_sol(&tmp.path().join("src/A.sol"), "import \"./B.sol\";\n");
+    write_sol(&tmp.path().join("src/B.sol"), "");
+
+    audit_isolated(&tmp)
+        .args(["recon", tmp.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("Project at"))
+        .stdout(contains("kind: foundry"))
+        .stdout(contains("0.8.20"))
+        .stdout(contains("sources: 2 file(s)"));
+}
+
+#[test]
+fn recon_local_path_with_unresolved_imports_shows_warning_section() {
+    let tmp = TempDir::new().unwrap();
+    write_sol(
+        &tmp.path().join("foundry.toml"),
+        "[profile.default]\nsrc = \"src\"\n",
+    );
+    write_sol(&tmp.path().join("src/A.sol"), "import \"./missing.sol\";\n");
+
+    audit_isolated(&tmp)
+        .args(["recon", tmp.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(contains("Unresolved imports"))
+        .stdout(contains("./missing.sol"));
+}
+
+#[test]
+fn recon_local_path_json_output_is_valid_json() {
+    let tmp = TempDir::new().unwrap();
+    write_sol(
+        &tmp.path().join("hardhat.config.ts"),
+        "module.exports = {};",
+    );
+    write_sol(&tmp.path().join("contracts/A.sol"), "");
+
+    let out = audit_isolated(&tmp)
+        .args(["recon", tmp.path().to_str().unwrap(), "--output", "json"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+    let v: serde_json::Value =
+        serde_json::from_str(&stdout).expect("recon --output json should emit valid JSON");
+    assert!(v.get("root").is_some(), "json should have root: {stdout}");
+    assert!(v.get("config").is_some(), "json should have config");
+    assert!(v.get("graph").is_some(), "json should have graph");
+}

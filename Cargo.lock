@@ -843,6 +843,7 @@ dependencies = [
  "basilisk-git",
  "basilisk-logging",
  "basilisk-onchain",
+ "basilisk-project",
  "clap",
  "predicates",
  "serde_json",

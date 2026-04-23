@@ -40,14 +40,19 @@ pub fn init(format: Option<LogFormat>, fallback_level: &str) -> Result<(), Strin
 
     let registry = tracing_subscriber::registry().with(env_filter);
 
+    // Logs always go to stderr so command output on stdout stays
+    // machine-parseable (e.g. `recon --output json` pipes cleanly).
     let result = match LogFormat::resolve(format) {
-        LogFormat::Pretty => registry.with(fmt::layer().pretty()).try_init(),
+        LogFormat::Pretty => registry
+            .with(fmt::layer().pretty().with_writer(io::stderr))
+            .try_init(),
         LogFormat::Json => registry
             .with(
                 fmt::layer()
                     .json()
                     .with_current_span(true)
-                    .with_span_list(false),
+                    .with_span_list(false)
+                    .with_writer(io::stderr),
             )
             .try_init(),
     };

@@ -7,6 +7,7 @@ use alloy_primitives::Address;
 use anyhow::{Context, Result};
 use basilisk_core::{detect, Chain, Config, Target};
 use basilisk_onchain::{ExpansionLimits, OnchainIngester};
+use basilisk_project::{resolve_project, ResolvedProject};
 use clap::{Args, ValueEnum};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -88,8 +89,14 @@ fn parse_chain_arg(s: &str) -> std::result::Result<Chain, String> {
 pub async fn run(args: &ReconArgs, config: &Config) -> Result<()> {
     let target = detect(&args.target, args.chain.clone());
 
-    if let Target::OnChain { address, chain } = &target {
-        return resolve_onchain(*address, chain, config, args).await;
+    match &target {
+        Target::OnChain { address, chain } => {
+            return resolve_onchain(*address, chain, config, args).await;
+        }
+        Target::LocalPath { root, .. } => {
+            return resolve_local_path(root, args);
+        }
+        _ => {}
     }
 
     match args.output {
@@ -97,6 +104,27 @@ pub async fn run(args: &ReconArgs, config: &Config) -> Result<()> {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&target)?),
     }
     tracing::info!(target = ?target, "recon complete");
+    Ok(())
+}
+
+fn resolve_local_path(root: &std::path::Path, args: &ReconArgs) -> Result<()> {
+    let project: ResolvedProject = resolve_project(root)
+        .with_context(|| format!("resolving local project at {}", root.display()))?;
+
+    match args.output {
+        OutputFormat::Pretty => print!("{project}"),
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&project)?),
+    }
+    let stats = project.stats();
+    tracing::info!(
+        root = %project.root.display(),
+        kind = %project.config.layout.kind,
+        sources = project.enumeration.sources().count(),
+        tests = project.enumeration.tests().count(),
+        resolved = stats.resolved_imports,
+        unresolved = stats.unresolved_imports,
+        "recon complete",
+    );
     Ok(())
 }
 
