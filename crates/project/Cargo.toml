@@ -1,0 +1,21 @@
+[package]
+name = "basilisk-project"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Source-side project detection and resolution for Basilisk."
+
+[lints]
+workspace = true
+
+[dependencies]
+basilisk-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

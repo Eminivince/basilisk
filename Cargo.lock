@@ -959,6 +959,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "basilisk-project"
+version = "0.1.0"
+dependencies = [
+ "basilisk-core",
+ "serde",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
 name = "basilisk-rpc"
 version = "0.1.0"
 dependencies = [
