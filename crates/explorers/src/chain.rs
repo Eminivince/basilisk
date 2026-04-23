@@ -18,7 +18,9 @@ use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 
 use crate::{
+    blockscout::Blockscout,
     error::ExplorerError,
+    etherscan::Etherscan,
     source_explorer::SourceExplorer,
     sourcify::Sourcify,
     types::{ExplorerAttempt, ExplorerOutcome, MatchQuality, ResolutionAttempt, VerifiedSource},
@@ -54,12 +56,32 @@ impl ExplorerChain {
         Self { explorers, cache }
     }
 
-    /// Build the default chain.
+    /// Build the default fallback chain for the given `chain` + `config`.
     ///
-    /// Checkpoint 3 wires Sourcify only (no API key, broad coverage).
-    /// Checkpoint 4 will extend this with Etherscan V2 and Blockscout.
-    pub fn standard(_config: &Config) -> Self {
-        Self::new(vec![Arc::new(Sourcify::default())])
+    /// Order: Sourcify (no key, broad coverage) → Etherscan V2 (if key set)
+    /// → Blockscout (if a host is resolvable for the target chain).
+    ///
+    /// Note the shape: we pass `chain` here because Blockscout needs a
+    /// per-chain host. Pre-selecting the Blockscout instance at chain
+    /// construction is cleaner than making every explorer accept `chain`
+    /// anew in `fetch_source`.
+    pub fn standard(chain: &Chain, config: &Config) -> Self {
+        let mut explorers: Vec<Arc<dyn SourceExplorer>> = Vec::with_capacity(3);
+        explorers.push(Arc::new(Sourcify::default()));
+
+        if let Some(key) = config
+            .etherscan_api_key
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
+            explorers.push(Arc::new(Etherscan::new(key)));
+        }
+
+        if let Some(host) = Blockscout::resolve_host(chain, config) {
+            explorers.push(Arc::new(Blockscout::new(host)));
+        }
+
+        Self::new(explorers)
     }
 
     /// Disable the cache for this handle (`--no-cache`). Still writes.
@@ -367,6 +389,109 @@ mod tests {
             ExplorerOutcome::RateLimited
         ));
         assert!(matches!(r.attempts[1].outcome, ExplorerOutcome::NoApiKey));
+    }
+
+    #[tokio::test]
+    async fn standard_three_step_chain_falls_through_to_blockscout() {
+        // Sourcify → 404, Etherscan → unverified, Blockscout → hit.
+        let sourcify_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/files/any/\d+/0x.*$"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&sourcify_server)
+            .await;
+
+        let etherscan_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/v2/api$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": "1", "message": "OK",
+                "result": [{"SourceCode": "", "ABI": "", "ContractName": ""}]
+            })))
+            .mount(&etherscan_server)
+            .await;
+
+        let blockscout_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/api/v2/smart-contracts/0x.*$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "is_verified": true,
+                "name": "Token",
+                "source_code": "// Token",
+                "file_path": "Token.sol",
+                "compiler_version": "v0.8.20",
+                "optimization_enabled": true,
+                "optimization_runs": 200,
+                "abi": [],
+                "license_type": "mit"
+            })))
+            .mount(&blockscout_server)
+            .await;
+
+        let sf: Arc<dyn SourceExplorer> =
+            Arc::new(crate::sourcify::Sourcify::new(sourcify_server.uri()));
+        let es: Arc<dyn SourceExplorer> = Arc::new(crate::etherscan::Etherscan::new_with_base(
+            etherscan_server.uri(),
+            "key",
+        ));
+        let bs: Arc<dyn SourceExplorer> =
+            Arc::new(crate::blockscout::Blockscout::new(blockscout_server.uri()));
+        let c = chain_with(vec![sf, es, bs]);
+        let r = c.resolve(&Chain::EthereumMainnet, addr()).await;
+
+        assert!(r.result.is_some());
+        assert_eq!(r.attempts.len(), 3);
+        assert_eq!(r.attempts[0].explorer, "sourcify");
+        assert!(matches!(
+            r.attempts[0].outcome,
+            ExplorerOutcome::NotVerified
+        ));
+        assert_eq!(r.attempts[1].explorer, "etherscan");
+        assert!(matches!(
+            r.attempts[1].outcome,
+            ExplorerOutcome::NotVerified
+        ));
+        assert_eq!(r.attempts[2].explorer, "blockscout");
+        assert!(matches!(
+            r.attempts[2].outcome,
+            ExplorerOutcome::Found { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn standard_omits_etherscan_without_api_key() {
+        // Without an etherscan key the default chain should just be
+        // Sourcify + (Blockscout if a default host is known).
+        let cfg = Config::default();
+        let c = ExplorerChain::standard(&Chain::EthereumMainnet, &cfg);
+        let debug = format!("{c:?}");
+        assert!(debug.contains("sourcify"));
+        assert!(!debug.contains("etherscan"));
+    }
+
+    #[tokio::test]
+    async fn standard_includes_etherscan_with_api_key() {
+        let cfg = Config {
+            etherscan_api_key: Some("k".into()),
+            ..Config::default()
+        };
+        let c = ExplorerChain::standard(&Chain::EthereumMainnet, &cfg);
+        let debug = format!("{c:?}");
+        assert!(debug.contains("sourcify"));
+        assert!(debug.contains("etherscan"));
+    }
+
+    #[tokio::test]
+    async fn standard_drops_blockscout_when_no_host() {
+        // Chain::Other has no default Blockscout host and no user config.
+        let cfg = Config::default();
+        let other = Chain::Other {
+            chain_id: 31_337,
+            name: "anvil".into(),
+        };
+        let c = ExplorerChain::standard(&other, &cfg);
+        let debug = format!("{c:?}");
+        assert!(!debug.contains("blockscout"));
     }
 
     #[tokio::test]
