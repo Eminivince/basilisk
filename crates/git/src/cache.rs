@@ -1,6 +1,6 @@
 //! Persistent repo cache. Pure-filesystem: the git2-backed `fetch()` that
-//! populates these directories lives in `crate::fetch` (`CP3c`). Everything
-//! here is testable without a network or libgit2.
+//! populates these directories lives in [`crate::fetch`]. Everything here
+//! is testable without a network or libgit2.
 //!
 //! Layout:
 //! ```text
