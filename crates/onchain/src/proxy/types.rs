@@ -1,6 +1,6 @@
 //! Proxy-detection result types.
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use serde::{Deserialize, Serialize};
 
 /// Structured proxy classification. Returned by [`crate::detect_proxy`].
@@ -13,6 +13,10 @@ pub struct ProxyInfo {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub facets: Vec<DiamondFacet>,
     pub detection_evidence: Vec<ProxyEvidence>,
+    /// Past implementations surfaced via `Upgraded(address)` event scans.
+    /// Empty if history wasn't fetched or the proxy isn't upgradeable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub upgrade_history: Vec<UpgradeEvent>,
 }
 
 /// Canonical proxy patterns Basilisk recognizes.
@@ -54,4 +58,23 @@ impl ProxyEvidence {
             value: value.into(),
         }
     }
+}
+
+/// One entry in an upgradeable proxy's historical impl list.
+///
+/// `old_implementation` is walked after sort-by-block: the previous event's
+/// `new_implementation` becomes the next event's `old_implementation`. The
+/// first event in the history has `None`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpgradeEvent {
+    pub block_number: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_timestamp: Option<u64>,
+    pub tx_hash: B256,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_implementation: Option<Address>,
+    pub new_implementation: Address,
+    /// Human-readable event signature we matched (`Upgraded(address)`,
+    /// `BeaconUpgraded(address)`, etc.).
+    pub event_signature: String,
 }

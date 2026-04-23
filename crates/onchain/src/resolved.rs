@@ -7,7 +7,10 @@ use basilisk_core::Chain;
 use basilisk_explorers::{ExplorerAttempt, VerifiedSource};
 use serde::{Deserialize, Serialize};
 
-use crate::proxy::ProxyInfo;
+use crate::{
+    enrichment::{AddressReference, ConstructorArgs, StorageLayout},
+    proxy::ProxyInfo,
+};
 
 /// A single contract fully resolved from on-chain data plus explorer lookups.
 ///
@@ -29,6 +32,17 @@ pub struct ResolvedContract {
     #[serde(with = "crate::time_serde")]
     pub fetched_at: SystemTime,
     pub resolution: ResolutionSources,
+
+    /// Constructor arguments recovered from the creation tx, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constructor_args: Option<ConstructorArgs>,
+    /// Variable→slot map from compiling verified source with solc.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_layout: Option<StorageLayout>,
+    /// Every outbound address reference we detected (storage, bytecode,
+    /// immutables, verified constants). Feeds graph expansion.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub referenced_addresses: Vec<AddressReference>,
 }
 
 /// Audit trail: which components returned what during resolution.

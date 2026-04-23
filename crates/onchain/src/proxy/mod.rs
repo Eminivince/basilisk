@@ -21,7 +21,7 @@ pub mod types;
 use alloy_primitives::{Address, Bytes, B256};
 use basilisk_rpc::RpcProvider;
 
-pub use types::{DiamondFacet, ProxyEvidence, ProxyInfo, ProxyKind};
+pub use types::{DiamondFacet, ProxyEvidence, ProxyInfo, ProxyKind, UpgradeEvent};
 
 /// Inspect a contract for proxy patterns.
 ///
@@ -45,6 +45,7 @@ pub async fn detect_proxy(
                 "EIP-1167 minimal proxy bytecode signature",
                 format!("0x{}", hex_lower(bytecode.as_ref())),
             )],
+            upgrade_history: Vec::new(),
         });
     }
 
@@ -92,6 +93,7 @@ pub async fn detect_proxy(
             beacon_address: beacon_addr,
             facets: Vec::new(),
             detection_evidence: evidence,
+            upgrade_history: Vec::new(),
         });
     }
     if let Some(impl_addr) = impl_addr {
@@ -107,6 +109,7 @@ pub async fn detect_proxy(
             beacon_address: beacon_addr,
             facets: Vec::new(),
             detection_evidence: evidence,
+            upgrade_history: Vec::new(),
         });
     }
 
@@ -126,6 +129,7 @@ pub async fn detect_proxy(
                     beacon_address: None,
                     facets,
                     detection_evidence: evidence,
+                    upgrade_history: Vec::new(),
                 });
             }
         }
@@ -144,6 +148,7 @@ pub async fn detect_proxy(
             beacon_address: beacon_addr,
             facets: Vec::new(),
             detection_evidence: evidence,
+            upgrade_history: Vec::new(),
         });
     }
 

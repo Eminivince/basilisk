@@ -17,6 +17,7 @@ alloy-sol-types = { workspace = true }
 async-trait = { workspace = true }
 basilisk-core = { workspace = true }
 basilisk-explorers = { workspace = true }
+basilisk-graph = { workspace = true }
 basilisk-rpc = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }

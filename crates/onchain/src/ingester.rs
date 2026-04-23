@@ -153,6 +153,9 @@ impl OnchainIngester {
                 implementation: None,
                 fetched_at: SystemTime::now(),
                 resolution,
+                constructor_args: None,
+                storage_layout: None,
+                referenced_addresses: Vec::new(),
             });
         }
 
@@ -226,6 +229,9 @@ impl OnchainIngester {
             implementation,
             fetched_at: SystemTime::now(),
             resolution,
+            constructor_args: None,
+            storage_layout: None,
+            referenced_addresses: Vec::new(),
         })
     }
 }

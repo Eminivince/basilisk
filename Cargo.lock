@@ -911,6 +911,7 @@ dependencies = [
  "async-trait",
  "basilisk-core",
  "basilisk-explorers",
+ "basilisk-graph",
  "basilisk-rpc",
  "futures",
  "serde",
