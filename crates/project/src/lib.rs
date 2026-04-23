@@ -14,6 +14,7 @@ pub mod config;
 pub mod error;
 pub mod foundry;
 pub mod hardhat;
+pub mod imports;
 pub(crate) mod js_text;
 pub mod layout;
 pub mod sources;
@@ -26,6 +27,10 @@ pub use foundry::{
     FoundryConfig, FoundryProfile, Remapping, DEFAULT_PROFILE,
 };
 pub use hardhat::{parse_hardhat_config, parse_hardhat_source, HardhatConfig, HardhatStyle};
+pub use imports::{
+    parse_imports, parse_imports_in_file, raw_import_paths, ImportKind, ImportStatement,
+    ImportedSymbol,
+};
 pub use layout::{detect_layout, ConfigFile, ProjectLayout};
 pub use sources::{enumerate_sources, SourceEnumeration, SourceFile, SourceKind};
 pub use truffle::{parse_truffle_config, parse_truffle_source, TruffleConfig};
