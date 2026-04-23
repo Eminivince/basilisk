@@ -10,7 +10,10 @@
 //!    importing file's parent directory.
 //! 3. **Bare paths** (`@oz/Token.sol`, `forge-std/Test.sol`) try every
 //!    applicable remapping in longest-prefix order, then fall back to
-//!    each library search directory (`lib/`, `node_modules/`, …).
+//!    each library search directory (`lib/`, `node_modules/`, …), then
+//!    — matching Foundry / solc's implicit-include-path convention —
+//!    against the project root itself (so `import "src/Foo.sol"` from
+//!    anywhere under the project resolves to `<root>/src/Foo.sol`).
 //!
 //! Context-aware remappings (`{ context, prefix, target }`) only apply
 //! when the importer's path — relative to the project root — starts
@@ -69,6 +72,11 @@ pub enum ResolutionVia {
     Remapping(Remapping),
     /// Found under one of the configured library search directories.
     LibDir(PathBuf),
+    /// Found under the project root itself — Foundry / solc treat the
+    /// project root as an implicit include path, so
+    /// `import "src/Foo.sol"` from any file under the project resolves
+    /// to `<root>/src/Foo.sol`.
+    ProjectRoot,
 }
 
 /// A single path we tried to resolve to.
@@ -213,6 +221,21 @@ impl ImportResolver {
                 tried_path: candidate,
             });
         }
+
+        // 5. Project root fallback. Foundry / solc treat the project
+        //    root as an implicit include path, so `import "src/Foo.sol"`
+        //    from anywhere under the project resolves against `<root>/`.
+        let candidate = self.project_root.join(trimmed);
+        if let Some(absolute) = canonical_if_exists(&candidate) {
+            return ResolvedImport::Resolved {
+                absolute_path: absolute,
+                via: ResolutionVia::ProjectRoot,
+            };
+        }
+        attempts.push(ResolutionAttempt {
+            via: ResolutionVia::ProjectRoot,
+            tried_path: candidate,
+        });
 
         ResolvedImport::Unresolved {
             raw_path: raw_path.to_string(),
@@ -426,10 +449,14 @@ mod tests {
                     attempts.len() >= 3,
                     "expected >=3 attempts, got {attempts:?}"
                 );
-                // Order: remapping → first lib → second lib.
+                // Order: remapping → first lib → second lib → project root.
                 assert!(matches!(attempts[0].via, ResolutionVia::Remapping(_)));
                 assert!(matches!(attempts[1].via, ResolutionVia::LibDir(_)));
                 assert!(matches!(attempts[2].via, ResolutionVia::LibDir(_)));
+                assert!(matches!(
+                    attempts.last().unwrap().via,
+                    ResolutionVia::ProjectRoot,
+                ));
             }
             other => panic!("got {other:?}"),
         }
@@ -479,6 +506,41 @@ mod tests {
         match res {
             ResolvedImport::Resolved { absolute_path, .. } => {
                 assert!(absolute_path.ends_with("vendored/oz/Token.sol"));
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bare_path_falls_back_to_project_root_when_no_lib_matches() {
+        // `import "src/Foo.sol"` from `test/` resolves against the project
+        // root even without a remapping — mirrors Foundry / solc behaviour.
+        let tmp = TempDir::new().unwrap();
+        touch(&tmp.path().join("src/Foo.sol"));
+        let r = ImportResolver::new(tmp.path().to_path_buf(), [], []);
+        let res = r.resolve(&tmp.path().join("test"), "src/Foo.sol");
+        match res {
+            ResolvedImport::Resolved { via, absolute_path } => {
+                assert_eq!(via, ResolutionVia::ProjectRoot);
+                assert!(absolute_path.ends_with("src/Foo.sol"));
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn project_root_fallback_sits_after_lib_dirs() {
+        // When a file exists in both a lib dir and the project root, the
+        // lib dir should win (earlier in the resolution chain).
+        let tmp = TempDir::new().unwrap();
+        touch(&tmp.path().join("lib/shared/X.sol"));
+        touch(&tmp.path().join("shared/X.sol")); // also at root
+        let r = ImportResolver::new(tmp.path().to_path_buf(), [], [tmp.path().join("lib")]);
+        let res = r.resolve(&tmp.path().join("src"), "shared/X.sol");
+        match res {
+            ResolvedImport::Resolved { via, absolute_path } => {
+                assert!(matches!(via, ResolutionVia::LibDir(_)));
+                assert!(absolute_path.ends_with("lib/shared/X.sol"));
             }
             other => panic!("got {other:?}"),
         }
