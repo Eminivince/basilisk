@@ -1,0 +1,7 @@
+{
+  "name": "hardhat-minimal",
+  "version": "0.0.1",
+  "devDependencies": {
+    "hardhat": "^2.22.0"
+  }
+}
