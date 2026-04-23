@@ -16,7 +16,7 @@ pub mod types;
 
 pub use alloy_impl::AlloyProvider;
 pub use chunked::fetch_logs_chunked;
-pub use error::RpcError;
+pub use error::{is_rpc_range_limited, RpcError};
 pub use memory::MemoryProvider;
 pub use provider::{LogFilter, RpcProvider};
 pub use resolver::{resolve_rpc_url, ResolvedEndpoint, RpcSource};

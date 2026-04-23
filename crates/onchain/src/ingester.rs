@@ -239,7 +239,7 @@ impl OnchainIngester {
     /// according to `limits`. Does **not** recurse into implementations
     /// or referenced addresses — that's the system orchestrator's job.
     #[allow(clippy::too_many_lines)] // Enrichment phases are tightly coupled; splitting each into
-    // its own helper would just route-through control without clarifying anything.
+                                     // its own helper would just route-through control without clarifying anything.
     pub async fn resolve_full(
         &self,
         address: Address,
@@ -267,10 +267,34 @@ impl OnchainIngester {
                 {
                     Ok(events) => proxy.upgrade_history = events,
                     Err(e) => {
-                        resolved
-                            .resolution
-                            .proxy_detection_notes
-                            .push(format!("upgrade-history fetch failed: {e}"));
+                        // Many free-tier RPC providers cap eth_getLogs range.
+                        // Degrade gracefully: empty history + informational note.
+                        if let IngestError::Rpc(rpc_err) = &e {
+                            if basilisk_rpc::is_rpc_range_limited(rpc_err) {
+                                tracing::warn!(
+                                    chain = self.chain.canonical_name(),
+                                    address = %address,
+                                    "upgrade-history unavailable: RPC provider limits log queries",
+                                );
+                                resolved.resolution.proxy_detection_notes.push(
+                                    "upgrade-history unavailable (RPC provider limits log \
+                                     queries — upgrade RPC plan or set RPC_URL_<CHAIN> to a \
+                                     provider without range limits)"
+                                        .into(),
+                                );
+                                // Leave proxy.upgrade_history as its empty default.
+                            } else {
+                                resolved
+                                    .resolution
+                                    .proxy_detection_notes
+                                    .push(format!("upgrade-history fetch failed: {e}"));
+                            }
+                        } else {
+                            resolved
+                                .resolution
+                                .proxy_detection_notes
+                                .push(format!("upgrade-history fetch failed: {e}"));
+                        }
                     }
                 }
             }

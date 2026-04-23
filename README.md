@@ -36,6 +36,60 @@ cargo test                       # runs the smoke test
 
 The release binary lands at `target/release/audit`.
 
+## Demo
+
+Against the Aave V3 Pool proxy on mainnet:
+
+```sh
+audit recon 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2 --chain ethereum
+```
+
+Produces (trimmed):
+
+```
+System resolved from 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2 on ethereum (id 1)
+  Contracts: 2 resolved, 0 failed
+  Graph edges: 3 (1 ProxiesTo, 0 FacetOf, 0 Historical, 1 StorageRef, ...)
+  Duration: 3.42s
+
+Contract 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2 (root)
+  Chain:    ethereum (id 1)
+  Verified: yes (via etherscan)
+  Name:     InitializableImmutableAdminUpgradeabilityProxy
+  Proxy:    EIP-1967 Transparent
+    Implementation: 0x5faab...(trimmed)
+    Admin:          0xEC568...(trimmed)
+  Bytecode: 1763 bytes (hash 0xabcd...)
+  Sources:
+    rpc:       https://eth-mainnet.g.alchemy.com/v2/***
+    explorers: sourcify=not-verified, etherscan=found(full)
+    note:      upgrade-history unavailable (RPC provider limits log queries
+               — upgrade RPC plan or set RPC_URL_<CHAIN> to a provider without
+               range limits)
+
+Contract 0x5faab... (implementation)
+  Name:     PoolInstance
+  ...
+  References:
+    storage slot 0x07 → 0xACL... (ACLManager)
+    bytecode 0x3fe   → 0xWETH... (WETH9)
+```
+
+What you're seeing: proxy pattern identified (Transparent), implementation
+one-hop-resolved, and library contracts discovered via bytecode `PUSH20`
+scanning surface as `storage/bytecode` references. The note line is
+informational — Alchemy's free tier caps `eth_getLogs` range, so upgrade
+history didn't come back. Point `RPC_URL_ETHEREUM` at a paid-tier RPC (or a
+provider without range caps) to get the full `Upgrade history: N upgrades`
+section populated.
+
+Rendering the graph:
+
+```sh
+audit recon 0x87870... --chain ethereum --dot /tmp/aave.dot
+dot -Tpng /tmp/aave.dot -o /tmp/aave.png
+```
+
 ## Architecture
 
 Single-binary tool delivered as a Cargo workspace. Today the workspace
