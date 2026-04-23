@@ -898,13 +898,16 @@ dependencies = [
  "alloy-sol-types",
  "async-trait",
  "basilisk-core",
+ "basilisk-explorers",
  "basilisk-rpc",
+ "futures",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "wiremock",
 ]
 
 [[package]]

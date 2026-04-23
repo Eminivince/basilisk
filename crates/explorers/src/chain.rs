@@ -56,6 +56,16 @@ impl ExplorerChain {
         Self { explorers, cache }
     }
 
+    /// Build a chain that never reads from or writes to the cache.
+    /// Primarily for test harnesses that shouldn't touch the shared
+    /// user-cache directory.
+    pub fn new_uncached(explorers: Vec<Arc<dyn SourceExplorer>>) -> Self {
+        Self {
+            explorers,
+            cache: None,
+        }
+    }
+
     /// Build the default fallback chain for the given `chain` + `config`.
     ///
     /// Order: Sourcify (no key, broad coverage) → Etherscan V2 (if key set)

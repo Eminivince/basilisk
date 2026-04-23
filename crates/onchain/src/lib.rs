@@ -1,11 +1,19 @@
 //! On-chain ingestion for Basilisk.
 //!
-//! Checkpoint 5 ships the proxy-detection module: pure-ish logic (bytecode
-//! pattern matching + storage-slot reads + one `eth_call`) that classifies
-//! a deployed contract into one of the canonical proxy patterns. The
-//! orchestrator that composes this with bytecode fetching and explorer
-//! lookups lands in checkpoint 6.
+//! [`OnchainIngester`] is the entry point: given a chain + config, call
+//! [`OnchainIngester::resolve`] with an address to get a
+//! [`ResolvedContract`] — bytecode + verified source (if found) + proxy
+//! classification + one-hop implementation resolution, with a full
+//! audit trail in [`ResolutionSources`].
 
+pub mod display;
+pub mod error;
+pub mod ingester;
 pub mod proxy;
+pub mod resolved;
+pub(crate) mod time_serde;
 
+pub use error::IngestError;
+pub use ingester::{OnchainIngester, DEFAULT_TIMEOUT_SECS};
 pub use proxy::{detect_proxy, DiamondFacet, ProxyEvidence, ProxyInfo, ProxyKind};
+pub use resolved::{ResolutionSources, ResolvedContract};
