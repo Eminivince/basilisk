@@ -76,22 +76,12 @@ impl ExplorerChain {
     /// construction is cleaner than making every explorer accept `chain`
     /// anew in `fetch_source`.
     pub fn standard(chain: &Chain, config: &Config) -> Self {
-        let mut explorers: Vec<Arc<dyn SourceExplorer>> = Vec::with_capacity(3);
-        explorers.push(Arc::new(Sourcify::default()));
+        Self::new(standard_explorers(chain, config))
+    }
 
-        if let Some(key) = config
-            .etherscan_api_key
-            .as_deref()
-            .filter(|s| !s.trim().is_empty())
-        {
-            explorers.push(Arc::new(Etherscan::new(key)));
-        }
-
-        if let Some(host) = Blockscout::resolve_host(chain, config) {
-            explorers.push(Arc::new(Blockscout::new(host)));
-        }
-
-        Self::new(explorers)
+    /// Same as [`Self::standard`] but bypasses all on-disk caching.
+    pub fn standard_uncached(chain: &Chain, config: &Config) -> Self {
+        Self::new_uncached(standard_explorers(chain, config))
     }
 
     /// Disable the cache for this handle (`--no-cache`). Still writes.
@@ -211,6 +201,26 @@ impl NoReadCacheChain {
     pub async fn resolve(&self, chain: &Chain, address: Address) -> ResolutionAttempt {
         self.inner.resolve_inner(chain, address, false).await
     }
+}
+
+/// Shared explorer-list builder for `standard` / `standard_uncached`.
+fn standard_explorers(chain: &Chain, config: &Config) -> Vec<Arc<dyn SourceExplorer>> {
+    let mut explorers: Vec<Arc<dyn SourceExplorer>> = Vec::with_capacity(3);
+    explorers.push(Arc::new(Sourcify::default()));
+
+    if let Some(key) = config
+        .etherscan_api_key
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        explorers.push(Arc::new(Etherscan::new(key)));
+    }
+
+    if let Some(host) = Blockscout::resolve_host(chain, config) {
+        explorers.push(Arc::new(Blockscout::new(host)));
+    }
+
+    explorers
 }
 
 fn classify_error(e: &ExplorerError) -> ExplorerOutcome {

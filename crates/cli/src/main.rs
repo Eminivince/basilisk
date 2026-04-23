@@ -1,8 +1,4 @@
 //! `audit` — the Basilisk command-line entry point.
-//!
-//! Phase 1 responsibilities: parse global flags, load config, wire up
-//! tracing, and dispatch to a subcommand. The only subcommand today is a
-//! stub for `recon`; real behavior arrives in later instruction sets.
 
 mod commands;
 
@@ -11,7 +7,7 @@ use basilisk_core::Config;
 use basilisk_logging::LogFormat;
 use clap::{Parser, Subcommand};
 
-use crate::commands::recon::ReconArgs;
+use crate::commands::{cache::CacheArgs, recon::ReconArgs};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -35,8 +31,11 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Classify a target (GitHub repo, on-chain address, local path) — stub for Phase 1.
+    /// Classify a target (GitHub repo, on-chain address, local path) and, for
+    /// on-chain targets, fetch bytecode + verified source + proxy info.
     Recon(ReconArgs),
+    /// Inspect and manage Basilisk's on-disk cache.
+    Cache(CacheArgs),
 }
 
 #[tokio::main]
@@ -56,6 +55,7 @@ async fn main() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("failed to initialize logging: {e}"))?;
 
     match &cli.command {
-        Command::Recon(args) => commands::recon::run(args, &config),
+        Command::Recon(args) => commands::recon::run(args, &config).await,
+        Command::Cache(args) => commands::cache::run(args).await,
     }
 }

@@ -835,13 +835,17 @@ dependencies = [
 name = "basilisk-cli"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
  "assert_cmd",
+ "basilisk-cache",
  "basilisk-core",
  "basilisk-logging",
+ "basilisk-onchain",
  "clap",
  "predicates",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
 ]

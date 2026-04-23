@@ -56,20 +56,43 @@ impl std::fmt::Debug for OnchainIngester {
 
 impl OnchainIngester {
     /// Standard constructor: builds [`AlloyProvider`] and the full
-    /// [`ExplorerChain`] from the user's config.
+    /// [`ExplorerChain`] from the user's config, both with caching enabled.
     pub fn new(chain: &Chain, config: &Config) -> Result<Self, IngestError> {
         let rpc = AlloyProvider::for_chain(chain, config)?;
         let explorers = ExplorerChain::standard(chain, config);
-        let timeout = Duration::from_secs(if config.onchain_timeout_secs == 0 {
-            DEFAULT_TIMEOUT_SECS
-        } else {
-            config.onchain_timeout_secs
-        });
         Ok(Self {
             chain: chain.clone(),
             rpc: Arc::new(rpc),
             explorers: Arc::new(explorers),
-            timeout,
+            timeout: Self::timeout_from_config(config),
+        })
+    }
+
+    /// Same as [`Self::new`] but neither the bytecode cache nor the
+    /// verified-source cache will be read or written. Use from `--no-cache`.
+    pub fn new_uncached(chain: &Chain, config: &Config) -> Result<Self, IngestError> {
+        let rpc = AlloyProvider::for_chain(chain, config)?.without_cache();
+        let explorers = ExplorerChain::standard_uncached(chain, config);
+        Ok(Self {
+            chain: chain.clone(),
+            rpc: Arc::new(rpc),
+            explorers: Arc::new(explorers),
+            timeout: Self::timeout_from_config(config),
+        })
+    }
+
+    /// Override the overall resolution timeout. Builder method.
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    fn timeout_from_config(config: &Config) -> Duration {
+        Duration::from_secs(if config.onchain_timeout_secs == 0 {
+            DEFAULT_TIMEOUT_SECS
+        } else {
+            config.onchain_timeout_secs
         })
     }
 
