@@ -261,10 +261,17 @@ fn recon_local_path_json_output_is_valid_json() {
 }
 
 // --- `audit recon <github-url>` (live network) ------------------------------
+//
+// Every test below clones a real GitHub repository, so they all run only
+// under `cargo test -- --ignored`. They live here (rather than in each
+// leaf crate) because the recon CLI is the user-facing API; if the stack
+// regresses end-to-end, these are the first tests to fail under the
+// opt-in live-suite. All are routed through `audit_isolated` so the
+// repo cache lands in a tempdir rather than `$HOME/.basilisk/repos/`.
 
 #[test]
-#[ignore = "requires network access to github.com"]
-fn recon_github_url_live_clone_renders_project() {
+#[ignore = "requires network access to github.com (small Foundry project)"]
+fn recon_live_github_forge_template_is_foundry() {
     let scratch = TempDir::new().unwrap();
     audit_isolated(&scratch)
         .args(["recon", "https://github.com/foundry-rs/forge-template"])
@@ -272,6 +279,78 @@ fn recon_github_url_live_clone_renders_project() {
         .success()
         .stdout(contains("Project at"))
         .stdout(contains("kind: foundry"));
+}
+
+#[test]
+#[ignore = "requires network access to github.com (large Foundry project, multi-GB clone)"]
+fn recon_live_github_aave_v3_origin_is_foundry() {
+    let scratch = TempDir::new().unwrap();
+    audit_isolated(&scratch)
+        .args(["recon", "https://github.com/aave-dao/aave-v3-origin"])
+        .assert()
+        .success()
+        .stdout(contains("kind: foundry"))
+        .stdout(contains("sources:"));
+}
+
+#[test]
+#[ignore = "requires network access to github.com (large Hardhat+Foundry project)"]
+fn recon_live_github_openzeppelin_contracts_is_mixed_or_hardhat() {
+    // OpenZeppelin publishes both `foundry.toml` and `hardhat.config.js`
+    // in recent versions. Accept either "hardhat" or "mixed(" in the
+    // kind line — the detector is authoritative.
+    let scratch = TempDir::new().unwrap();
+    let out = audit_isolated(&scratch)
+        .args([
+            "recon",
+            "https://github.com/OpenZeppelin/openzeppelin-contracts",
+        ])
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    assert!(
+        stdout.contains("kind: hardhat") || stdout.contains("kind: mixed("),
+        "expected hardhat or mixed kind, got: {stdout}",
+    );
+}
+
+#[test]
+#[ignore = "requires network access to github.com (exercises URL with /tree/<ref>)"]
+fn recon_live_github_url_with_tree_ref_resolves_cleanly() {
+    let scratch = TempDir::new().unwrap();
+    audit_isolated(&scratch)
+        .args([
+            "recon",
+            "https://github.com/foundry-rs/forge-template/tree/master",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Project at"));
+}
+
+#[test]
+#[ignore = "requires network access to github.com (e2e: recon populates repo cache)"]
+fn recon_populates_repo_cache_visible_via_cache_repos_list() {
+    let scratch = TempDir::new().unwrap();
+    // First: clone via recon (populates `<scratch>/.basilisk/repos/`).
+    audit_isolated(&scratch)
+        .args(["recon", "https://github.com/foundry-rs/forge-template"])
+        .assert()
+        .success();
+
+    // Then: `audit cache repos list` should now show the entry.
+    let repo_cache_root = scratch.path().join(".basilisk").join("repos");
+    audit_isolated(&scratch)
+        .args([
+            "cache",
+            "repos",
+            "--cache-dir",
+            repo_cache_root.to_str().unwrap(),
+            "list",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("foundry-rs/forge-template"));
 }
 
 #[test]
