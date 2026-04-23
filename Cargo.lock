@@ -915,6 +915,7 @@ dependencies = [
  "basilisk-graph",
  "basilisk-rpc",
  "futures",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

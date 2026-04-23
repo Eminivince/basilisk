@@ -21,6 +21,7 @@ basilisk-explorers = { workspace = true }
 basilisk-graph = { workspace = true }
 basilisk-rpc = { workspace = true }
 futures = { workspace = true }
+regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

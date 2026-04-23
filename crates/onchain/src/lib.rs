@@ -12,6 +12,7 @@ pub mod error;
 pub mod history;
 pub mod ingester;
 pub mod proxy;
+pub mod references;
 pub mod resolved;
 pub mod storage_layout;
 pub mod system;
@@ -26,6 +27,10 @@ pub use error::IngestError;
 pub use history::fetch_upgrade_history;
 pub use ingester::{OnchainIngester, DEFAULT_TIMEOUT_SECS};
 pub use proxy::{detect_proxy, DiamondFacet, ProxyEvidence, ProxyInfo, ProxyKind, UpgradeEvent};
+pub use references::{
+    extract_immutable_addresses, scan_bytecode_for_addresses, scan_storage_for_addresses,
+    verify_bytecode_address_references,
+};
 pub use resolved::{ResolutionSources, ResolvedContract};
 pub use storage_layout::recover_storage_layout;
 pub use system::{
