@@ -18,7 +18,7 @@ pub mod session;
 pub mod tool;
 pub mod tools;
 
-pub use runner::{AgentError, AgentOutcome, AgentStats, AgentStopReason, Budget};
+pub use runner::{AgentError, AgentOutcome, AgentRunner, AgentStats, AgentStopReason, Budget};
 pub use session::{
     LoadedSession, SessionError, SessionRecord, SessionStatus, SessionStore, SessionSummary,
     ToolCallRecord, TurnRecord, TurnRole,

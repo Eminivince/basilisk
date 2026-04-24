@@ -1,19 +1,9 @@
-//! The agent runner — types in `CP5a`, loop in `CP5c`.
+//! Vocabulary the [`AgentRunner`] (`CP5b`) and its loop body (`CP5c`)
+//! share. Landed in `CP5a`; nothing here knows about tools, the LLM,
+//! or the session store, so it stays cheap to round-trip through JSON
+//! for `audit session show`.
 //!
-//! `CP5` lands the LLM-driven tool-use loop in three slices:
-//!
-//!  - **`CP5a`** (this commit): the vocabulary. [`Budget`] caps a run's
-//!    turns / tokens / cost / wall-clock; [`AgentStats`] accumulates
-//!    actual usage; [`AgentStopReason`] explains why the loop exited;
-//!    [`AgentOutcome`] bundles those together with the optional
-//!    [`FinalReport`]. [`AgentError`] covers the unrecoverable
-//!    failures (LLM client error, store write error). No `AgentRunner`
-//!    yet — that's `CP5b`.
-//!  - **`CP5b`**: the runner skeleton + budget-enforcement helpers.
-//!  - **`CP5c`**: the loop body itself, wired into `SessionStore` and
-//!    `LlmBackend`.
-//!
-//! [`FinalReport`]: crate::tools::FinalReport
+//! [`AgentRunner`]: super::AgentRunner
 
 use std::time::{Duration, SystemTime};
 
