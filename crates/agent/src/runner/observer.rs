@@ -66,6 +66,42 @@ pub trait AgentObserver: Send + Sync {
     /// persistence errors that bubble up as [`AgentError`], since
     /// those abort before we have a well-formed outcome.
     fn on_session_complete(&self, _outcome: &AgentOutcome) {}
+
+    /// Called whenever the runner has to rescue a text-only turn.
+    /// Fires twice per nudge: once as [`NudgeKind::SoftPrompt`] when
+    /// the reminder user message is injected, once as
+    /// [`NudgeKind::ForceToolChoice`] when `tool_choice=Any` is set
+    /// on the follow-up request. Observers use this to surface "the
+    /// model needed help here" in the CLI / logs and to track rate
+    /// over time as a prompt-quality signal.
+    fn on_nudge_fired(&self, _event: NudgeEvent) {}
+}
+
+/// Emitted by [`AgentRunner`] when the loop has to correct a
+/// text-only assistant turn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NudgeEvent {
+    pub session_id: SessionId,
+    /// 1-based turn index that the nudge applies to (the turn *about*
+    /// to execute under the nudge's correction).
+    pub turn_index: u32,
+    pub kind: NudgeKind,
+    /// Consecutive text-ends in this streak, including the one that
+    /// triggered the nudge. Starts at 1 on the first text-end.
+    pub consecutive_text_ends: u32,
+}
+
+/// Which half of the two-layer nudge mechanism fired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NudgeKind {
+    /// The runner injected a user-role reminder message asking the
+    /// model to call `finalize_report` or another tool. Soft rails:
+    /// the model can ignore it, which is why `ForceToolChoice`
+    /// always follows.
+    SoftPrompt,
+    /// The runner set `tool_choice = Any` on the next request.
+    /// Hard rails: the provider rejects any text-only completion.
+    ForceToolChoice,
 }
 
 /// Observer that does nothing. Used when no observer is supplied.
@@ -118,6 +154,27 @@ mod tests {
         obs.on_tool_use_start(1, "t", "id");
         obs.on_tool_result(1, "t", true, 0);
         obs.on_turn_end(1, &AgentStats::default());
+        obs.on_nudge_fired(NudgeEvent {
+            session_id: SessionId::new("x"),
+            turn_index: 1,
+            kind: NudgeKind::SoftPrompt,
+            consecutive_text_ends: 1,
+        });
+    }
+
+    #[test]
+    fn nudge_event_is_constructible_and_comparable() {
+        let a = NudgeEvent {
+            session_id: SessionId::new("s1"),
+            turn_index: 3,
+            kind: NudgeKind::SoftPrompt,
+            consecutive_text_ends: 1,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+        // Kind equality
+        assert_eq!(NudgeKind::SoftPrompt, NudgeKind::SoftPrompt);
+        assert_ne!(NudgeKind::SoftPrompt, NudgeKind::ForceToolChoice);
     }
 
     #[test]

@@ -18,8 +18,8 @@ use std::sync::Arc;
 use basilisk_agent::testing::{build_test_runner, EchoTool, MockLlmBackend, MockResponse};
 use basilisk_agent::tools::{Confidence, FINALIZE_REPORT_NAME};
 use basilisk_agent::{
-    AgentObserver, AgentOutcome, AgentStats, AgentStopReason, Budget, SessionId, SessionStatus,
-    TurnRole,
+    AgentObserver, AgentOutcome, AgentStats, AgentStopReason, Budget, NudgeEvent, NudgeKind,
+    SessionId, SessionStatus, TurnRole,
 };
 use basilisk_llm::{LlmBackend, LlmError, TokenUsage};
 
@@ -494,6 +494,40 @@ async fn recover_then_text_end_again_gets_a_fresh_nudge() {
 }
 
 #[tokio::test]
+async fn nudge_fires_both_halves_and_increments_stats_count() {
+    // Text-end on turn 1 → runner injects nudge and forces Any on
+    // turn 2 → model finalizes. Observer must see both nudge halves
+    // (SoftPrompt + ForceToolChoice), both tagged with turn_index=2
+    // and streak=1; stats.nudge_count must be 2.
+    let backend = Arc::new(MockLlmBackend::new("claude-opus-4-7"));
+    backend.push(MockResponse::new().text("Here's my brief: ...").build());
+    backend.push(
+        MockResponse::new()
+            .finalize("tu_f", "# brief", Confidence::Medium, None)
+            .build(),
+    );
+
+    let (runner, _dir) = make_runner(backend, Budget::default());
+    let obs = RecordingObserver::default();
+    let outcome = runner
+        .run_with_observer("eth/0x", "go", None, &obs)
+        .await
+        .expect("run ok");
+
+    assert_eq!(outcome.stop_reason, AgentStopReason::ReportFinalized);
+    assert_eq!(
+        outcome.stats.nudge_count, 2,
+        "each nudge fires both halves (soft + force); one recovery run = 2 events",
+    );
+
+    let events = obs.take();
+    let nudges: Vec<&String> = events.iter().filter(|e| e.starts_with("nudge/")).collect();
+    assert_eq!(nudges.len(), 2, "exactly two nudge events: {events:?}");
+    assert_eq!(nudges[0].as_str(), "nudge/soft/turn=2/streak=1");
+    assert_eq!(nudges[1].as_str(), "nudge/force/turn=2/streak=1");
+}
+
+#[tokio::test]
 async fn text_only_turn_followed_by_tool_call_recovers_via_nudge() {
     // Model text-ends on turn 1, receives the nudge, and recovers by
     // calling finalize_report on turn 2. Exercises the recovery path
@@ -656,6 +690,16 @@ impl AgentObserver for RecordingObserver {
     }
     fn on_session_complete(&self, outcome: &AgentOutcome) {
         self.push(format!("session_complete/{}", outcome.stop_reason.tag()));
+    }
+    fn on_nudge_fired(&self, event: NudgeEvent) {
+        let kind = match event.kind {
+            NudgeKind::SoftPrompt => "soft",
+            NudgeKind::ForceToolChoice => "force",
+        };
+        self.push(format!(
+            "nudge/{kind}/turn={}/streak={}",
+            event.turn_index, event.consecutive_text_ends,
+        ));
     }
 }
 

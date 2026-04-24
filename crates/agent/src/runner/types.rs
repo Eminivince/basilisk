@@ -123,6 +123,19 @@ pub struct AgentStats {
     pub cost_cents: u32,
     /// Wall-clock duration from loop entry to exit, in milliseconds.
     pub duration_ms: u64,
+    /// How many times the runner had to rescue a text-only assistant
+    /// turn via the two-layer nudge (soft prompt + forced
+    /// `tool_choice=Any`). Zero on healthy sessions; >0 is a useful
+    /// prompt-quality / model-quality signal over time.
+    ///
+    /// Counts each nudge event (both `SoftPrompt` and `ForceToolChoice`
+    /// halves) so consumers can compare against `turns` for a
+    /// nudge-per-turn ratio.
+    ///
+    /// `#[serde(default)]` keeps old session rows readable after this
+    /// field was added in set-6.5.
+    #[serde(default)]
+    pub nudge_count: u32,
 }
 
 impl AgentStats {

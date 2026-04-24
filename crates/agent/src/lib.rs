@@ -23,7 +23,7 @@ pub mod tools;
 pub use prompts::{RECON_DEFAULT_PROMPT, RECON_V1_PROMPT, RECON_V2_PROMPT};
 pub use runner::{
     AgentError, AgentObserver, AgentOutcome, AgentRunner, AgentStats, AgentStopReason, Budget,
-    NoopObserver,
+    NoopObserver, NudgeEvent, NudgeKind,
 };
 pub use session::{
     default_db_path, LoadedSession, SessionError, SessionRecord, SessionStatus, SessionStore,

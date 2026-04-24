@@ -18,5 +18,5 @@ pub mod observer;
 pub mod types;
 
 pub use agent::AgentRunner;
-pub use observer::{AgentObserver, NoopObserver};
+pub use observer::{AgentObserver, NoopObserver, NudgeEvent, NudgeKind};
 pub use types::{AgentError, AgentOutcome, AgentStats, AgentStopReason, Budget};

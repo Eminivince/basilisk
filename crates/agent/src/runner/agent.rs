@@ -25,7 +25,7 @@ use futures::StreamExt;
 use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
 
-use crate::runner::observer::{AgentObserver, NoopObserver};
+use crate::runner::observer::{AgentObserver, NoopObserver, NudgeEvent, NudgeKind};
 use crate::runner::types::{AgentError, AgentOutcome, AgentStats, AgentStopReason, Budget};
 use crate::session::{SessionStatus, SessionStore, TurnRole};
 use crate::tool::{SessionId, ToolContext, ToolRegistry, ToolResult};
@@ -502,6 +502,29 @@ impl AgentRunner {
                             .into(),
                     };
                 }
+                // Observer telemetry: one event per nudge half.
+                // SoftPrompt: the user-message reminder we inject
+                // right now into history.
+                // ForceToolChoice: the tool_choice=Any we set for
+                // the next request builder.
+                // `turn_index_for_observer + 1` is the turn these
+                // nudges apply to — i.e. the one the model will
+                // execute next, under the nudge's correction.
+                let target_turn = turn_index_for_observer.saturating_add(1);
+                observer.on_nudge_fired(NudgeEvent {
+                    session_id: session_id.clone(),
+                    turn_index: target_turn,
+                    kind: NudgeKind::SoftPrompt,
+                    consecutive_text_ends,
+                });
+                observer.on_nudge_fired(NudgeEvent {
+                    session_id: session_id.clone(),
+                    turn_index: target_turn,
+                    kind: NudgeKind::ForceToolChoice,
+                    consecutive_text_ends,
+                });
+                stats.nudge_count = stats.nudge_count.saturating_add(2);
+
                 // Hard rails: force the model to emit a tool call on
                 // the next turn. `Any` lets it pick between
                 // `finalize_report` and another investigation tool —

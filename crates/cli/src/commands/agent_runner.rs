@@ -24,8 +24,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use basilisk_agent::{
     default_db_path, standard_registry, AgentObserver, AgentOutcome, AgentRunner, AgentStats,
-    AgentStopReason, Budget, LoadedSession, NoopObserver, SessionId, SessionStore,
-    RECON_DEFAULT_PROMPT,
+    AgentStopReason, Budget, LoadedSession, NoopObserver, NudgeEvent, NudgeKind, SessionId,
+    SessionStore, RECON_DEFAULT_PROMPT,
 };
 use basilisk_core::Config;
 use basilisk_git::RepoCache;
@@ -539,12 +539,17 @@ fn render_pretty(outcome: &AgentOutcome) {
     println!("session_id: {}", outcome.session_id);
     println!("stop_reason: {}", describe_stop_reason(&outcome.stop_reason));
     println!(
-        "stats: {} turns, {} tool calls, {} tokens, ~{}¢, {}ms",
+        "stats: {} turns, {} tool calls, {} tokens, ~{}¢, {}ms{}",
         outcome.stats.turns,
         outcome.stats.tool_calls,
         outcome.stats.total_tokens(),
         outcome.stats.cost_cents,
         outcome.stats.duration_ms,
+        if outcome.stats.nudge_count > 0 {
+            format!(", {} nudge events", outcome.stats.nudge_count)
+        } else {
+            String::new()
+        },
     );
     println!();
 
@@ -656,6 +661,28 @@ impl AgentObserver for PrettyObserver {
 
     fn on_session_complete(&self, _outcome: &AgentOutcome) {
         // Final summary is rendered by `render_outcome` on stdout.
+    }
+
+    fn on_nudge_fired(&self, event: NudgeEvent) {
+        // Clear any mid-text state so the warning lands on its own
+        // line even if the model was streaming prose when we cut in.
+        let had_text = {
+            let mut s = self.state.lock().expect("pretty-observer state poisoned");
+            let was = s.text_this_turn;
+            s.text_this_turn = false;
+            was
+        };
+        if had_text {
+            Self::write_line("");
+        }
+        let kind = match event.kind {
+            NudgeKind::SoftPrompt => "soft prompt",
+            NudgeKind::ForceToolChoice => "forcing tool call on next turn",
+        };
+        Self::write_line(&format!(
+            "  ⚠ runner nudge (consecutive text-ends: {}): {}",
+            event.consecutive_text_ends, kind,
+        ));
     }
 }
 
