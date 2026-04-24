@@ -18,6 +18,7 @@
 pub mod anthropic;
 pub mod backend;
 pub mod error;
+pub mod openai_compat;
 pub mod pricing;
 pub(crate) mod sse;
 pub mod types;
@@ -25,6 +26,7 @@ pub mod types;
 pub use anthropic::{AnthropicBackend, DEFAULT_MODEL};
 pub use backend::{collect_stream, LlmBackend};
 pub use error::LlmError;
+pub use openai_compat::{OpenAICompatibleBackend, Provider};
 pub use pricing::{ModelPricing, PricingTable};
 pub use types::{
     BlockType, CompletionRequest, CompletionResponse, CompletionStream, ContentBlock, Delta,

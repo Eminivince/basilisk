@@ -91,7 +91,9 @@ To install `audit` as a system binary: `cargo install --path crates/cli`.
 
 | Variable | What it enables | Without it |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | LLM-driven recon via `audit recon <target> --agent` (Phase 3 in progress) | Deterministic recon still works without |
+| `ANTHROPIC_API_KEY` | Default LLM provider for `audit recon <target> --agent` | Pick another `--provider` or fall back to deterministic recon |
+| `OPENROUTER_API_KEY` | Agent routing via `--provider openrouter` (any Claude/GPT/Gemini/Llama model) | Use a different provider |
+| `OPENAI_API_KEY` | Agent routing via `--provider openai`; fallback key for `--provider openai-compat` | Use a different provider or supply `--llm-api-key-env` |
 | `ALCHEMY_API_KEY` | Primary RPC for supported chains | Falls back to `RPC_URL_<CHAIN>` or public RPC |
 | `ETHERSCAN_API_KEY` | Verified source, creation-tx lookup, multi-chain via Etherscan V2 | Falls back to Sourcify and Blockscout |
 | `GITHUB_TOKEN` | 5000/hour API rate limit, private-repo access, authenticated clones | 60/hour unauthenticated |
@@ -284,6 +286,49 @@ marked `interrupted`; pick it up with `session resume`.
 `crates/agent/src/prompts/recon_v1.md` and is embedded at build
 time. Point `--system-prompt <path>` at a working copy to iterate
 without a rebuild.
+
+**Choosing a provider.** `--provider` selects the LLM backend:
+
+| `--provider` | Endpoint | Key env var | Notes |
+|---|---|---|---|
+| `anthropic` *(default)* | `api.anthropic.com` | `ANTHROPIC_API_KEY` | Native Claude. |
+| `openrouter` | `openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | Any Claude / GPT / Gemini / Llama model OpenRouter proxies. |
+| `openai` | `api.openai.com/v1` | `OPENAI_API_KEY` | Native OpenAI. |
+| `ollama` | `http://localhost:11434/v1` | none | Local models (Llama, Qwen, DeepSeek, …). |
+| `openai-compat` | `--llm-base-url <url>` | `--llm-api-key-env <VAR>` (optional) | Any OpenAI-compatible server: `llama.cpp`, LM Studio, LocalAI, vLLM. |
+
+Examples:
+
+```bash
+# OpenRouter, routed to Claude Opus under the hood:
+audit recon <target> --agent \
+  --provider openrouter \
+  --model anthropic/claude-opus-4-7
+
+# Local Ollama running Llama 3.1 70B:
+audit recon <target> --agent \
+  --provider ollama \
+  --model llama3.1:70b
+
+# llama.cpp server on a custom port:
+audit recon <target> --agent \
+  --provider openai-compat \
+  --llm-base-url http://localhost:8080/v1 \
+  --model qwen2.5-coder-32b
+
+# OpenAI GPT-4o:
+audit recon <target> --agent \
+  --provider openai --model gpt-4o
+```
+
+The transcript, cost accounting, and session persistence are provider-
+neutral — `audit session list` / `show <id>` work identically across
+providers. The session row records `model = "<provider>/<model>"` so
+a mixed DB remains attributable.
+
+Local-model caveat: tool-use quality varies significantly by model.
+A 7B-class model rarely completes a recon brief without supervision.
+The 70B-class Llamas / Qwens work well in our testing.
 
 **Live tests.** Three `#[ignore]`-d tests (`crates/agent/tests/agent_live.rs`)
 exercise the full path against real targets (`forge-template`, USDC,

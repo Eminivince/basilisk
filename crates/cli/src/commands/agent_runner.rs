@@ -30,7 +30,10 @@ use basilisk_agent::{
 use basilisk_core::Config;
 use basilisk_git::RepoCache;
 use basilisk_github::GithubClient;
-use basilisk_llm::{AnthropicBackend, LlmBackend, Message, MessageRole, DEFAULT_MODEL};
+use basilisk_llm::{
+    AnthropicBackend, LlmBackend, Message, MessageRole, OpenAICompatibleBackend, Provider,
+    DEFAULT_MODEL,
+};
 use clap::{Args, ValueEnum};
 use sha2::{Digest, Sha256};
 
@@ -41,6 +44,29 @@ pub enum OutputFormat {
     Pretty,
     /// Pretty-printed JSON of the [`AgentOutcome`].
     Json,
+}
+
+/// Which LLM backend to drive.
+///
+///  - `anthropic` — native `api.anthropic.com/v1/messages` (default).
+///  - `openrouter` — `openrouter.ai/api/v1/chat/completions`, any model
+///    `OpenRouter` proxies. Requires `OPENROUTER_API_KEY` or
+///    `--llm-api-key-env <VAR>`.
+///  - `openai` — `api.openai.com/v1/chat/completions`. Requires
+///    `OPENAI_API_KEY`.
+///  - `ollama` — `http://localhost:11434/v1/chat/completions`. No
+///    API key required by default.
+///  - `openai-compat` — custom `OpenAI`-compatible endpoint. Supply
+///    `--llm-base-url <url>` and optionally `--llm-api-key-env <VAR>`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum ProviderKind {
+    #[default]
+    Anthropic,
+    Openrouter,
+    Openai,
+    Ollama,
+    #[value(name = "openai-compat")]
+    OpenaiCompat,
 }
 
 /// Flags that attach to `audit recon <target>` when `--agent` is set.
@@ -56,36 +82,69 @@ pub enum OutputFormat {
 #[derive(Debug, Args, Default)]
 pub struct AgentFlags {
     /// Free-form note attached to the session row.
-    #[arg(long = "session-note", id = "agent_session_note")]
+    #[arg(long = "session-note", id = "agent_session_note", value_name = "TEXT")]
     pub note: Option<String>,
 
     /// Path to the session database. Defaults to `~/.basilisk/sessions.db`.
-    #[arg(long = "db", id = "agent_db")]
+    #[arg(long = "db", id = "agent_db", value_name = "PATH")]
     pub db: Option<PathBuf>,
 
     /// Path to a file containing the system prompt. Overrides the
     /// embedded `recon_v1` prompt. Useful for prompt iteration.
-    #[arg(long = "system-prompt", id = "agent_system_prompt")]
+    #[arg(long = "system-prompt", id = "agent_system_prompt", value_name = "PATH")]
     pub system_prompt: Option<PathBuf>,
 
-    /// Anthropic model id. Defaults to the crate's `DEFAULT_MODEL`.
-    #[arg(long = "model", id = "agent_model")]
+    /// Model id. Meaning depends on `--provider`:
+    ///
+    ///  - anthropic: `claude-opus-4-7`, `claude-sonnet-4-6`, …
+    ///  - openrouter: `anthropic/claude-opus-4-7`, `openai/gpt-4o`,
+    ///    `meta-llama/llama-3.1-70b-instruct`, …
+    ///  - openai: `gpt-4o`, `gpt-4o-mini`, …
+    ///  - ollama / openai-compat: whatever the server exposes, e.g.
+    ///    `llama3.1:70b`, `qwen2.5-coder:32b`.
+    #[arg(long = "model", id = "agent_model", value_name = "MODEL")]
     pub model: Option<String>,
 
+    /// Which LLM backend to drive. Default: `anthropic`.
+    #[arg(
+        long = "provider",
+        id = "agent_provider",
+        value_enum,
+        default_value_t = ProviderKind::Anthropic,
+        value_name = "PROVIDER",
+    )]
+    pub provider: ProviderKind,
+
+    /// Override the API base URL. Only meaningful with
+    /// `--provider openai-compat` (default: none) and with
+    /// `--provider ollama` (default: `http://localhost:11434/v1`).
+    /// Ignored for `anthropic`/`openrouter`/`openai` — those have
+    /// fixed endpoints.
+    #[arg(long = "llm-base-url", id = "agent_llm_base_url", value_name = "URL")]
+    pub llm_base_url: Option<String>,
+
+    /// Name of the env var to read the API key from. Defaults per
+    /// provider: `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`,
+    /// `OPENAI_API_KEY`. Ignored for ollama (no key required). Use
+    /// this when you have a custom env var name or want to pick
+    /// between keys at runtime.
+    #[arg(long = "llm-api-key-env", id = "agent_llm_api_key_env", value_name = "VAR")]
+    pub llm_api_key_env: Option<String>,
+
     /// Max LLM turns.
-    #[arg(long = "max-turns", id = "agent_max_turns")]
+    #[arg(long = "max-turns", id = "agent_max_turns", value_name = "N")]
     pub max_turns: Option<u32>,
 
     /// Max total tokens (input + output + cache).
-    #[arg(long = "max-tokens", id = "agent_max_tokens")]
+    #[arg(long = "max-tokens", id = "agent_max_tokens", value_name = "N")]
     pub max_tokens: Option<u64>,
 
     /// Max estimated spend in cents.
-    #[arg(long = "max-cost", id = "agent_max_cost")]
+    #[arg(long = "max-cost", id = "agent_max_cost", value_name = "CENTS")]
     pub max_cost_cents: Option<u32>,
 
     /// Max wall-clock duration in seconds (agent only).
-    #[arg(long = "agent-max-duration", id = "agent_max_duration")]
+    #[arg(long = "agent-max-duration", id = "agent_max_duration", value_name = "SECS")]
     pub max_duration_secs: Option<u64>,
 
     /// Output format for the agent's final summary.
@@ -185,14 +244,7 @@ pub async fn resume_agent(
 }
 
 fn build_runner(flags: &AgentFlags, config: &Config) -> Result<(AgentRunner, PathBuf)> {
-    let api_key = config
-        .anthropic_api_key
-        .as_deref()
-        .context("ANTHROPIC_API_KEY is not set — export it or put it in a .env file")?;
-    let model = flags.model.as_deref().unwrap_or(DEFAULT_MODEL);
-    let backend: Arc<dyn LlmBackend> = Arc::new(
-        AnthropicBackend::with_model(api_key, model).context("initialising Anthropic backend")?,
-    );
+    let backend = build_backend(flags, config)?;
 
     let db_path = flags.db.clone().unwrap_or_else(default_db_path);
     if let Some(parent) = db_path.parent() {
@@ -229,6 +281,117 @@ fn build_runner(flags: &AgentFlags, config: &Config) -> Result<(AgentRunner, Pat
         build_budget(flags),
     );
     Ok((runner, db_path))
+}
+
+/// Construct the LLM backend dictated by `flags.provider` + its
+/// provider-specific inputs (env var, base URL, model).
+///
+/// Lookup order for the API key, by provider:
+///  - anthropic: `--llm-api-key-env` → `ANTHROPIC_API_KEY`.
+///  - openrouter: `--llm-api-key-env` → `OPENROUTER_API_KEY`.
+///  - openai: `--llm-api-key-env` → `OPENAI_API_KEY`.
+///  - ollama: not required; any non-empty value is accepted if passed.
+///  - openai-compat: `--llm-api-key-env` (defaults to `OPENAI_API_KEY`).
+fn build_backend(flags: &AgentFlags, config: &Config) -> Result<Arc<dyn LlmBackend>> {
+    fn resolve_key(
+        flags: &AgentFlags,
+        config: &Config,
+        default_var: &str,
+        config_field: Option<&str>,
+    ) -> Option<String> {
+        if let Some(var) = flags.llm_api_key_env.as_deref() {
+            return non_empty_env(var);
+        }
+        // Prefer the parsed Config field (covers dotenv) before falling back
+        // to a direct env lookup on the default var name.
+        match config_field {
+            Some("anthropic") => config.anthropic_api_key.clone().or_else(|| non_empty_env(default_var)),
+            Some("openrouter") => config.openrouter_api_key.clone().or_else(|| non_empty_env(default_var)),
+            Some("openai") => config.openai_api_key.clone().or_else(|| non_empty_env(default_var)),
+            _ => non_empty_env(default_var),
+        }
+    }
+
+    match flags.provider {
+        ProviderKind::Anthropic => {
+            let api_key = resolve_key(flags, config, "ANTHROPIC_API_KEY", Some("anthropic"))
+                .context("Anthropic API key is not set — export ANTHROPIC_API_KEY (or --llm-api-key-env)")?;
+            let model = flags.model.as_deref().unwrap_or(DEFAULT_MODEL);
+            let backend = AnthropicBackend::with_model(api_key, model)
+                .context("initialising Anthropic backend")?;
+            Ok(Arc::new(backend))
+        }
+        ProviderKind::Openrouter => {
+            let api_key = resolve_key(flags, config, "OPENROUTER_API_KEY", Some("openrouter"))
+                .context("OpenRouter API key is not set — export OPENROUTER_API_KEY (or --llm-api-key-env)")?;
+            let model = flags
+                .model
+                .as_deref()
+                .unwrap_or("anthropic/claude-opus-4-7");
+            let backend = OpenAICompatibleBackend::with_provider_and_model(
+                Provider::OpenRouter,
+                api_key,
+                model,
+            )
+            .context("initialising OpenRouter backend")?;
+            Ok(Arc::new(backend))
+        }
+        ProviderKind::Openai => {
+            let api_key = resolve_key(flags, config, "OPENAI_API_KEY", Some("openai"))
+                .context("OpenAI API key is not set — export OPENAI_API_KEY (or --llm-api-key-env)")?;
+            let model = flags.model.as_deref().unwrap_or("gpt-4o");
+            let backend = OpenAICompatibleBackend::with_provider_and_model(
+                Provider::OpenAi,
+                api_key,
+                model,
+            )
+            .context("initialising OpenAI backend")?;
+            Ok(Arc::new(backend))
+        }
+        ProviderKind::Ollama => {
+            // Ollama accepts an empty key. An override is allowed if the
+            // operator has put a proxy in front of it.
+            let api_key = resolve_key(flags, config, "OLLAMA_API_KEY", None).unwrap_or_default();
+            let model = flags.model.as_deref().unwrap_or("llama3.1");
+            let backend = match flags.llm_base_url.as_deref() {
+                Some(base) => OpenAICompatibleBackend::with_base_model_and_provider(
+                    base,
+                    api_key,
+                    model,
+                    Provider::Ollama,
+                ),
+                None => {
+                    OpenAICompatibleBackend::with_provider_and_model(Provider::Ollama, api_key, model)
+                }
+            }
+            .context("initialising Ollama backend")?;
+            Ok(Arc::new(backend))
+        }
+        ProviderKind::OpenaiCompat => {
+            let base = flags
+                .llm_base_url
+                .as_deref()
+                .context("--llm-base-url is required with --provider openai-compat")?;
+            let api_key =
+                resolve_key(flags, config, "OPENAI_API_KEY", Some("openai")).unwrap_or_default();
+            let model = flags
+                .model
+                .as_deref()
+                .context("--model is required with --provider openai-compat")?;
+            let backend = OpenAICompatibleBackend::with_base_model_and_provider(
+                base,
+                api_key,
+                model,
+                Provider::Custom,
+            )
+            .context("initialising openai-compat backend")?;
+            Ok(Arc::new(backend))
+        }
+    }
+}
+
+fn non_empty_env(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|v| !v.trim().is_empty())
 }
 
 fn build_budget(flags: &AgentFlags) -> Budget {
@@ -445,25 +608,88 @@ impl AgentObserver for PrettyObserver {
 mod tests {
     use super::*;
 
-    #[test]
-    fn budget_overrides_apply_on_top_of_defaults() {
-        let flags = AgentFlags {
+    fn flags_fixture() -> AgentFlags {
+        AgentFlags {
             note: None,
             db: None,
             system_prompt: None,
             model: None,
-            max_turns: Some(5),
+            provider: ProviderKind::Anthropic,
+            llm_base_url: None,
+            llm_api_key_env: None,
+            max_turns: None,
             max_tokens: None,
-            max_cost_cents: Some(100),
+            max_cost_cents: None,
             max_duration_secs: None,
             output: OutputFormat::Pretty,
             no_stream: false,
-        };
+        }
+    }
+
+    #[test]
+    fn budget_overrides_apply_on_top_of_defaults() {
+        let mut flags = flags_fixture();
+        flags.max_turns = Some(5);
+        flags.max_cost_cents = Some(100);
         let b = build_budget(&flags);
         assert_eq!(b.max_turns, 5);
         assert_eq!(b.max_cost_cents, 100);
         assert_eq!(b.max_tokens_total, Budget::default().max_tokens_total);
         assert_eq!(b.max_duration, Budget::default().max_duration);
+    }
+
+    fn err_string(r: Result<Arc<dyn LlmBackend>>) -> String {
+        match r {
+            Ok(_) => panic!("expected error, got Ok"),
+            Err(e) => format!("{e:#}"),
+        }
+    }
+
+    #[test]
+    fn build_backend_anthropic_requires_key() {
+        let flags = flags_fixture();
+        let msg = err_string(build_backend(&flags, &Config::default()));
+        assert!(msg.contains("Anthropic API key"), "got: {msg}");
+    }
+
+    #[test]
+    fn build_backend_openrouter_uses_openrouter_key_field() {
+        let mut flags = flags_fixture();
+        flags.provider = ProviderKind::Openrouter;
+        flags.model = Some("anthropic/claude-opus-4-7".into());
+        let config = Config {
+            openrouter_api_key: Some("sk-or-test".into()),
+            ..Config::default()
+        };
+        let backend = build_backend(&flags, &config).expect("builds");
+        assert_eq!(backend.identifier(), "openrouter/anthropic/claude-opus-4-7");
+    }
+
+    #[test]
+    fn build_backend_ollama_works_without_any_api_key() {
+        let mut flags = flags_fixture();
+        flags.provider = ProviderKind::Ollama;
+        flags.model = Some("qwen2.5-coder:32b".into());
+        let backend = build_backend(&flags, &Config::default()).expect("builds");
+        assert_eq!(backend.identifier(), "ollama/qwen2.5-coder:32b");
+    }
+
+    #[test]
+    fn build_backend_openai_compat_requires_base_url() {
+        let mut flags = flags_fixture();
+        flags.provider = ProviderKind::OpenaiCompat;
+        flags.model = Some("some-model".into());
+        let msg = err_string(build_backend(&flags, &Config::default()));
+        assert!(msg.contains("--llm-base-url"), "got: {msg}");
+    }
+
+    #[test]
+    fn build_backend_openai_compat_requires_model() {
+        let mut flags = flags_fixture();
+        flags.provider = ProviderKind::OpenaiCompat;
+        flags.llm_base_url = Some("http://localhost:8080/v1".into());
+        let msg = err_string(build_backend(&flags, &Config::default()));
+        assert!(msg.contains("--model"), "got: {msg}");
     }
 
     #[test]
