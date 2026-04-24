@@ -46,9 +46,21 @@ impl RepoCache {
         options: FetchOptions,
     ) -> Result<FetchedRepo, GitError> {
         // 1. Resolve as much as we can without a clone.
-        let (resolved_ref, known_sha, requires_full) = self
+        let (resolved_ref, mut known_sha, requires_full) = self
             .resolve_reference(owner, repo, reference, &options)
             .await?;
+
+        // 1b. For Branch/Tag refs without a known SHA yet, try
+        // `git ls-remote`-style advertisement. This is a single
+        // lightweight HTTP round-trip; hitting it means a cached
+        // checkout can return immediately without re-cloning.
+        // Silent fallback on any error — we'll fall through to the
+        // regular clone path.
+        if known_sha.is_none() && !options.force_refresh {
+            if let Some(sha) = ls_remote_sha(&clone_url(owner, repo), &resolved_ref).await {
+                known_sha = Some(sha);
+            }
+        }
 
         // 2. Fast path: known full SHA + cache hit.
         if let Some(sha) = &known_sha {
@@ -283,6 +295,30 @@ impl RepoCache {
             Err(e) => Err(e),
         }
     }
+}
+
+/// Ask the remote for the SHA of a Branch/Tag ref without cloning.
+/// Single HTTP round-trip via `git ls-remote`-style ref
+/// advertisement. Returns `None` for Commit/Ambiguous refs (where
+/// the advertisement doesn't help) or on any error (so the caller
+/// falls through to the regular clone path).
+async fn ls_remote_sha(url: &str, reference: &GitRef) -> Option<String> {
+    let ref_name = match reference {
+        GitRef::Branch(b) => format!("refs/heads/{b}"),
+        GitRef::Tag(t) => format!("refs/tags/{t}"),
+        GitRef::Commit(_) | GitRef::Ambiguous(_) => return None,
+    };
+    let url = url.to_string();
+    tokio::task::spawn_blocking(move || -> Option<String> {
+        let mut remote = git2::Remote::create_detached(url.as_str()).ok()?;
+        remote.connect(git2::Direction::Fetch).ok()?;
+        let list = remote.list().ok()?;
+        let head = list.iter().find(|h| h.name() == ref_name)?;
+        Some(head.oid().to_string())
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// Build the clone URL. If `GITHUB_TOKEN` is set, embed it; otherwise plain HTTPS.

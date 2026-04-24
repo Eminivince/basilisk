@@ -180,6 +180,17 @@ fn default_store_path() -> PathBuf {
 /// Build an embedding provider from Config + env. Centralised
 /// here so every command picks the same provider.
 fn build_embeddings(config: &Config) -> Result<Arc<dyn EmbeddingProvider>> {
+    // Default Voyage to the free-tier 10k tok/min gate. Paid tiers
+    // can raise this via `VOYAGE_TOKEN_RATE_PER_MINUTE`; setting it
+    // to `0` disables the gate entirely.
+    let voyage_rate = match std::env::var("VOYAGE_TOKEN_RATE_PER_MINUTE").ok() {
+        Some(s) => match s.trim().parse::<u32>() {
+            Ok(0) => None,
+            Ok(n) => Some(n),
+            Err(_) => Some(10_000),
+        },
+        None => Some(10_000),
+    };
     let selection = ProviderSelection {
         provider: config
             .embeddings_provider
@@ -192,7 +203,7 @@ fn build_embeddings(config: &Config) -> Result<Arc<dyn EmbeddingProvider>> {
         openrouter_embeddings_dim: config.openrouter_embeddings_dim,
         ollama_host: config.ollama_host.clone(),
         model: None,
-        voyage_token_rate_per_minute: None,
+        voyage_token_rate_per_minute: voyage_rate,
     };
     build_provider(&selection).context("building embedding provider")
 }

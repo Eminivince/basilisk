@@ -50,10 +50,12 @@ pub struct RetryConfig {
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {
-            max_retries: 4,
+            max_retries: 5,
             base_delay: Duration::from_millis(500),
             multiplier: 2.0,
-            max_delay: Duration::from_secs(30),
+            // Large enough to cover a minute-scoped rate-limit
+            // window (Voyage free tier, for example).
+            max_delay: Duration::from_secs(75),
         }
     }
 }
@@ -95,6 +97,11 @@ impl TokenBudgetGate {
     /// Block until there's room for `estimated_tokens` in the
     /// current window. Always returns — worst case is a sleep of
     /// `window`.
+    ///
+    /// Oversize requests (`estimated_tokens > self.limit`) are
+    /// allowed through after waiting for a fresh window. They spend
+    /// the full bucket and don't loop forever. The retry layer
+    /// handles any actual 429 from the provider.
     pub async fn acquire(&self, estimated_tokens: u32) {
         loop {
             let wait = {
@@ -105,13 +112,21 @@ impl TokenBudgetGate {
                     state.tokens_used = 0;
                 }
                 let remaining = self.limit.saturating_sub(state.tokens_used);
-                if estimated_tokens <= remaining {
+                // Oversize request path: if this one call exceeds
+                // the entire bucket, the simple fit check can never
+                // succeed. Let it through after the window resets.
+                if estimated_tokens > self.limit {
+                    if state.tokens_used == 0 {
+                        state.tokens_used = self.limit;
+                        return;
+                    }
+                    self.window.saturating_sub(elapsed) + Duration::from_millis(10)
+                } else if estimated_tokens <= remaining {
                     state.tokens_used = state.tokens_used.saturating_add(estimated_tokens);
                     return;
+                } else {
+                    self.window.saturating_sub(elapsed) + Duration::from_millis(10)
                 }
-                // Release lock before sleeping so other callers that
-                // fit can proceed.
-                self.window.saturating_sub(elapsed) + Duration::from_millis(10)
             };
             tokio::time::sleep(wait).await;
         }
@@ -174,13 +189,18 @@ impl BatchingProvider {
                         return Err(e);
                     }
                     // Respect Retry-After when the provider sent one.
-                    let wait = if let EmbeddingError::RateLimited {
-                        retry_after: Some(ra),
-                    } = &e
-                    {
-                        (*ra).min(self.retry.max_delay)
-                    } else {
-                        delay.min(self.retry.max_delay)
+                    // For RateLimited errors without a Retry-After,
+                    // wait at least 60s — typical provider windows
+                    // are minute-scoped, so shorter waits just
+                    // produce another 429.
+                    let wait = match &e {
+                        EmbeddingError::RateLimited {
+                            retry_after: Some(ra),
+                        } => (*ra).min(self.retry.max_delay),
+                        EmbeddingError::RateLimited { retry_after: None } => {
+                            Duration::from_secs(60).min(self.retry.max_delay)
+                        }
+                        _ => delay.min(self.retry.max_delay),
                     };
                     tracing::warn!(
                         error = %e,
@@ -221,13 +241,54 @@ impl EmbeddingProvider for BatchingProvider {
             return Ok(Vec::new());
         }
         let chunk_size = self.inner.max_batch_size().max(1);
+        // When a token gate is active, also split batches by
+        // estimated token count so no single call exceeds the
+        // gate's per-window budget. Without this, Voyage's 10k
+        // tok/min free tier 429s every batch.
+        let token_cap = self.gate.as_ref().map(|g| g.limit);
         let mut out = Vec::with_capacity(inputs.len());
         for batch in inputs.chunks(chunk_size) {
-            let mut rows = self.call_with_retry(batch).await?;
-            out.append(&mut rows);
+            for sub in split_by_tokens(batch, token_cap) {
+                let mut rows = self.call_with_retry(sub).await?;
+                out.append(&mut rows);
+            }
         }
         Ok(out)
     }
+}
+
+/// Split a batch into sub-batches each estimated to fit within
+/// `token_cap`. Any single input that alone exceeds `token_cap`
+/// still forms its own 1-element batch — the gate's oversize path
+/// handles that.
+fn split_by_tokens(
+    batch: &[EmbeddingInput],
+    token_cap: Option<u32>,
+) -> Vec<&[EmbeddingInput]> {
+    let Some(cap) = token_cap else {
+        return vec![batch];
+    };
+    let mut out: Vec<&[EmbeddingInput]> = Vec::new();
+    let mut start = 0usize;
+    let mut running: u32 = 0;
+    for (i, inp) in batch.iter().enumerate() {
+        let est = u32::try_from(inp.text.len() / 4 + 1).unwrap_or(u32::MAX);
+        // Flush if adding this input would exceed the cap (and we
+        // have at least one input queued).
+        if running > 0 && running.saturating_add(est) > cap {
+            out.push(&batch[start..i]);
+            start = i;
+            running = 0;
+        }
+        running = running.saturating_add(est);
+    }
+    if start < batch.len() {
+        out.push(&batch[start..]);
+    }
+    if out.is_empty() {
+        out.push(batch);
+    }
+    out
 }
 
 /// Rough token estimate for rate gating. Actual token counts come
