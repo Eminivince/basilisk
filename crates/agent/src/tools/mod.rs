@@ -16,6 +16,7 @@ pub mod fetch_github_repo;
 pub mod finalize_report;
 pub mod get_storage_slot;
 pub mod grep_project;
+pub mod knowledge_tools;
 pub mod list_directory;
 pub mod read_file;
 pub mod resolve_onchain_contract;
@@ -28,6 +29,9 @@ pub use fetch_github_repo::FetchGithubRepo;
 pub use finalize_report::{Confidence, FinalReport, FinalizeReport, NAME as FINALIZE_REPORT_NAME};
 pub use get_storage_slot::GetStorageSlot;
 pub use grep_project::GrepProject;
+pub use knowledge_tools::{
+    RecordFinding, SearchKnowledgeBase, SearchProtocolDocs, SearchSimilarCode,
+};
 pub use list_directory::ListDirectory;
 pub use read_file::ReadFile;
 pub use resolve_onchain_contract::ResolveOnchainContract;
@@ -64,6 +68,30 @@ pub fn standard_registry() -> ToolRegistry {
     reg.register(Arc::new(GetStorageSlot));
     reg.register(Arc::new(StaticCall));
     reg.register(Arc::new(FinalizeReport));
+    reg
+}
+
+/// Standard recon registry plus the four knowledge tools.
+///
+/// Tools added beyond [`standard_registry`] (4):
+///  - `search_knowledge_base`
+///  - `search_similar_code`
+///  - `search_protocol_docs`
+///  - `record_finding`
+///
+/// The `ToolContext` this registry dispatches against must have
+/// `ctx.knowledge.is_some()` — otherwise the knowledge tools
+/// return a structured error on every invocation. The runner
+/// populates it via [`AgentRunner::with_knowledge`].
+///
+/// [`AgentRunner::with_knowledge`]: crate::AgentRunner::with_knowledge
+#[must_use]
+pub fn knowledge_enhanced_registry() -> ToolRegistry {
+    let mut reg = standard_registry();
+    reg.register(Arc::new(SearchKnowledgeBase));
+    reg.register(Arc::new(SearchSimilarCode));
+    reg.register(Arc::new(SearchProtocolDocs));
+    reg.register(Arc::new(RecordFinding));
     reg
 }
 
@@ -121,6 +149,25 @@ mod tests {
                 "tool {:?} missing properties",
                 def.name,
             );
+        }
+    }
+
+    #[test]
+    fn knowledge_enhanced_registry_has_fifteen_tools() {
+        let reg = knowledge_enhanced_registry();
+        assert_eq!(reg.len(), 15);
+    }
+
+    #[test]
+    fn knowledge_enhanced_registry_includes_all_four_new_tools() {
+        let reg = knowledge_enhanced_registry();
+        for name in [
+            "search_knowledge_base",
+            "search_similar_code",
+            "search_protocol_docs",
+            "record_finding",
+        ] {
+            assert!(reg.get(name).is_some(), "missing {name}");
         }
     }
 

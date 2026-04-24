@@ -31,7 +31,8 @@ pub use session::{
 };
 pub use tool::{SessionId, Tool, ToolContext, ToolRegistry, ToolResult};
 pub use tools::{
-    standard_registry, AnalyzeProject, ClassifyTarget, Confidence, FetchGithubRepo, FinalReport,
-    FinalizeReport, GetStorageSlot, GrepProject, ListDirectory, ReadFile, ResolveOnchainContract,
-    ResolveOnchainSystem, StaticCall, FINALIZE_REPORT_NAME,
+    knowledge_enhanced_registry, standard_registry, AnalyzeProject, ClassifyTarget, Confidence,
+    FetchGithubRepo, FinalReport, FinalizeReport, GetStorageSlot, GrepProject, ListDirectory,
+    ReadFile, RecordFinding, ResolveOnchainContract, ResolveOnchainSystem, SearchKnowledgeBase,
+    SearchProtocolDocs, SearchSimilarCode, StaticCall, FINALIZE_REPORT_NAME,
 };

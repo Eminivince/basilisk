@@ -16,10 +16,12 @@ basilisk-core = { workspace = true }
 basilisk-explorers = { workspace = true }
 basilisk-git = { workspace = true }
 basilisk-github = { workspace = true }
+basilisk-knowledge = { workspace = true }
 basilisk-llm = { workspace = true }
 basilisk-onchain = { workspace = true }
 basilisk-project = { workspace = true }
 basilisk-rpc = { workspace = true }
+basilisk-vector = { workspace = true }
 
 alloy-primitives = { workspace = true }
 async-trait = { workspace = true }
@@ -37,4 +39,5 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+basilisk-embeddings = { workspace = true }
 tempfile = { workspace = true }

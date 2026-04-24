@@ -54,6 +54,14 @@ pub struct AgentRunner {
     pub(crate) repo_cache: Arc<RepoCache>,
     pub(crate) system_prompt: String,
     pub(crate) budget: Budget,
+    /// Optional knowledge-base handle. `None` → knowledge tools
+    /// (if any are registered) return a structured error. Set via
+    /// [`AgentRunner::with_knowledge`].
+    pub(crate) knowledge: Option<Arc<basilisk_knowledge::KnowledgeBase>>,
+    /// Optional engagement id, plumbed into `ToolContext` so
+    /// `search_protocol_docs` can filter the `protocols`
+    /// collection. `None` disables engagement scoping.
+    pub(crate) engagement_id: Option<String>,
 }
 
 impl AgentRunner {
@@ -79,7 +87,29 @@ impl AgentRunner {
             repo_cache,
             system_prompt: system_prompt.into(),
             budget,
+            knowledge: None,
+            engagement_id: None,
         }
+    }
+
+    /// Builder: attach a knowledge base. The runner's
+    /// [`ToolContext`](crate::tool::ToolContext) will expose the
+    /// handle so knowledge tools can use it.
+    #[must_use]
+    pub fn with_knowledge(
+        mut self,
+        kb: Arc<basilisk_knowledge::KnowledgeBase>,
+    ) -> Self {
+        self.knowledge = Some(kb);
+        self
+    }
+
+    /// Builder: attach an engagement id. `search_protocol_docs`
+    /// filters on this when set.
+    #[must_use]
+    pub fn with_engagement_id(mut self, id: impl Into<String>) -> Self {
+        self.engagement_id = Some(id.into());
+        self
     }
 
     /// Backend identifier — recorded on the session row so a later
@@ -119,6 +149,8 @@ impl AgentRunner {
             config: Arc::clone(&self.config),
             github: Arc::clone(&self.github),
             repo_cache: Arc::clone(&self.repo_cache),
+            knowledge: self.knowledge.clone(),
+            engagement_id: self.engagement_id.clone(),
             session_id,
         }
     }

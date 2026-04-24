@@ -64,6 +64,16 @@ pub struct ToolContext {
     pub github: Arc<GithubClient>,
     pub repo_cache: Arc<RepoCache>,
     pub session_id: SessionId,
+    /// Optional knowledge-base handle. `None` when the session was
+    /// spawned without knowledge wiring (recon, tests). Knowledge
+    /// tools (`search_knowledge_base`, `record_finding`, …) return
+    /// a structured error when dispatched against `None` — the
+    /// agent can self-correct instead of crashing.
+    pub knowledge: Option<Arc<basilisk_knowledge::KnowledgeBase>>,
+    /// Optional engagement id, used by `search_protocol_docs` to
+    /// filter the `protocols` collection. `None` disables
+    /// engagement-scoped filtering.
+    pub engagement_id: Option<String>,
 }
 
 impl ToolContext {
@@ -80,6 +90,8 @@ impl ToolContext {
             config,
             github,
             repo_cache,
+            knowledge: None,
+            engagement_id: None,
             session_id: SessionId::new("test-session"),
         }
     }
