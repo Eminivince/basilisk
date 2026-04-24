@@ -905,6 +905,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "basilisk-embeddings"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
 name = "basilisk-explorers"
 version = "0.1.0"
 dependencies = [

@@ -27,8 +27,26 @@ pub struct Config {
     /// `OpenAI` / `OpenAI`-compatible API key. Used as the fallback key
     /// for `--provider openai-compat` when no provider-specific key is
     /// set. Most local backends (`Ollama`, `llama.cpp`) don't need one.
+    /// Also used by the embeddings crate when
+    /// `EMBEDDINGS_PROVIDER=openai`.
     #[serde(default)]
     pub openai_api_key: Option<String>,
+    /// Voyage AI API key. Used by the embeddings crate when
+    /// `EMBEDDINGS_PROVIDER=voyage` (the default when this key is
+    /// set). Voyage's code-specialised models outperform general
+    /// embeddings on Solidity retrieval.
+    #[serde(default)]
+    pub voyage_api_key: Option<String>,
+    /// Explicit embeddings provider: `voyage`, `openai`, or
+    /// `ollama`. When unset, resolution prefers Voyage if its key is
+    /// present, else `OpenAI` if its key is present, else `Ollama`.
+    #[serde(default)]
+    pub embeddings_provider: Option<String>,
+    /// Override for the Ollama endpoint used by embeddings (and
+    /// future completion calls). Defaults to
+    /// `http://localhost:11434`.
+    #[serde(default)]
+    pub ollama_host: Option<String>,
     #[serde(default)]
     pub etherscan_api_key: Option<String>,
     #[serde(default)]
@@ -56,6 +74,9 @@ impl Default for Config {
             anthropic_api_key: None,
             openrouter_api_key: None,
             openai_api_key: None,
+            voyage_api_key: None,
+            embeddings_provider: None,
+            ollama_host: None,
             etherscan_api_key: None,
             alchemy_api_key: None,
             github_token: None,
@@ -99,6 +120,9 @@ impl Config {
             anthropic_api_key: non_empty_env("ANTHROPIC_API_KEY"),
             openrouter_api_key: non_empty_env("OPENROUTER_API_KEY"),
             openai_api_key: non_empty_env("OPENAI_API_KEY"),
+            voyage_api_key: non_empty_env("VOYAGE_API_KEY"),
+            embeddings_provider: non_empty_env("EMBEDDINGS_PROVIDER"),
+            ollama_host: non_empty_env("OLLAMA_HOST"),
             etherscan_api_key: non_empty_env("ETHERSCAN_API_KEY"),
             alchemy_api_key: non_empty_env("ALCHEMY_API_KEY"),
             github_token: non_empty_env("GITHUB_TOKEN"),
