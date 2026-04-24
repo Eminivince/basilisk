@@ -90,18 +90,52 @@ enrichment the agent can do itself via a dedicated tool when it needs
 them, and hard-wiring it into every resolve call would burn CPU on
 data most audits don't read.
 
-### Pricing-table coverage for non-Anthropic models
+### LanceDB-backed vector store
 
-**Unlocked in this set (6.5).** Previously `PricingTable::for_model`
-only knew `claude-opus-4-7` / `claude-sonnet-4-6`, so every OpenRouter
-or OpenAI-direct run reported `cost_cents: 0` and `--max-cost` was
-effectively a no-op on those paths. Set 6.5 adds prefix-aware lookup
-(`openrouter/anthropic/...` → Anthropic pricing), an alias table for
-provider-prefixed forms, entries for the current GPT-5 / GPT-4o family,
-and explicit zero-cost entries for local providers (`ollama/*`,
-`llama.cpp/*`, `vllm/*`, `lmstudio/*`) so local runs report $0 rather
-than "unknown." Unknown models now surface a one-shot `tracing::warn!`
-instead of silently disabling cost enforcement.
+`crates/vector/` currently ships `FileVectorStore` — a JSON snapshot
+written on every mutation. The `VectorStore` trait is identical to
+what a LanceDB implementation would expose, so the swap is transparent
+to callers. Unlock: a `LanceDbStore` behind a `lancedb` feature flag,
+migrating `~/.basilisk/knowledge/` from `store.json` to Arrow/Parquet
+collection directories. Deferred after a CP7.3 validation spike
+measured ~11-min cold compile and ~12GB `target/` dir with the
+`lancedb` dependency pulled in — a bad trade at the current corpus
+scale (thousands of records search in milliseconds from JSON). Revisit
+when a single operator's corpus crosses ~50k records or when we need
+concurrent cross-process reads, whichever comes first.
+
+### Additional corpus ingesters (Set 7.5)
+
+Set 7 shipped three external ingesters: Solodit, SWC registry,
+OpenZeppelin advisories. Four more — Code4rena, Sherlock, rekt.news,
+Trail of Bits — were scoped out of Set 7 to keep the set at 10
+checkpoints. Unlock: one `Ingester` trait impl per source, additive
+against the existing crate. Deferred because the three shipped
+ingesters already seed ~2500 records and let Set 8/9 evaluate
+retrieval quality on real data; broadening the corpus can wait until
+the retrieval path itself is wired into reasoning.
+
+### Explicit requests-per-minute gate
+
+`TokenBudgetGate` paces embedding calls by tokens/min and in practice
+this limits Voyage free-tier runs to ~1 request/min naturally (each
+batch saturates the 10k token budget). Unlock: a sibling
+`RequestBudgetGate` that enforces a hard RPM cap so bursty workloads
+(many small batches) can't sneak past the implicit pacing. Deferred
+because the token gate already covers the realistic failure mode;
+this is belt-and-suspenders against a pathological case we haven't
+seen. Add when we first see an RPM-class 429 in a real run.
+
+### Reembed cost-warning UX
+
+`audit knowledge reembed <collection>` is the documented migration
+path when the operator swaps embedding providers (different
+dimensionality, different model). Unlock: the command itself plus a
+pre-flight estimator that prints record count × tokens × target-
+provider price, requires explicit `--confirm yes`. Deferred because
+dim migration hasn't happened yet in practice — the operator's only
+provider swap so far has been Ollama → Voyage where we cleared the
+collection manually. Ships alongside the first real migration event.
 
 ### `audit session resume` live test
 
@@ -120,3 +154,9 @@ interruption scenario worth replaying.
 
 Items that used to be in this file and have since shipped. Short one-line
 entries for each, with the instruction set that delivered them.
+
+- **Pricing-table coverage for non-Anthropic models** — Set 6.5. Prefix-aware
+  lookup for `openrouter/...`, `openai/...`, GPT-5 / GPT-4o family, and
+  explicit zero-cost entries for local providers (`ollama/*`, `llama.cpp/*`,
+  `vllm/*`, `lmstudio/*`). Unknown models now emit a one-shot warning instead
+  of silently disabling `--max-cost`.
