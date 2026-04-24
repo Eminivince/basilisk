@@ -175,8 +175,17 @@ impl Ingester for SwcIngester {
 
         let fetched = fetch_swc_registry(&self.cache).await?;
 
-        let entries_dir = fetched.working_tree.join("entries");
-        let swc_files = collect_swc_files(&entries_dir)?;
+        // SWC-registry reorganised its layout: files used to live at
+        // `entries/SWC-NNN.md`, they now live at
+        // `entries/docs/SWC-NNN.md`. Try the new layout first; fall
+        // back to the old one for pinned historic refs.
+        let entries_new = fetched.working_tree.join("entries").join("docs");
+        let entries_old = fetched.working_tree.join("entries");
+        let swc_files = if entries_new.exists() {
+            collect_swc_files(&entries_new)?
+        } else {
+            collect_swc_files(&entries_old)?
+        };
         report.records_scanned = swc_files.len();
         if let Some(max) = options.max_records {
             if swc_files.len() > max {

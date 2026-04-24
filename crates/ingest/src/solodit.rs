@@ -61,6 +61,103 @@ pub struct SoloditFindingRow {
     pub date: Option<String>,
 }
 
+/// `OpenAI` fine-tuning chat JSONL — a common Solodit export shape.
+/// Each row looks like:
+///
+/// ```json
+/// {"messages":[
+///   {"role":"system","content":"..."},
+///   {"role":"user","content":"Analyze the following vulnerability report: [H-01] Title..."},
+///   {"role":"assistant","content":"# Lines of code ... # Vulnerability details ..."}
+/// ]}
+/// ```
+///
+/// Title is pulled from the user turn (with the common "Analyze the
+/// following vulnerability report:" prefix stripped); body is the
+/// assistant turn. Severity comes from the `[H|M|L|I|G|C-NN]`
+/// bracketed tag at the start of the title if present. Id is a
+/// content hash so re-ingesting the same row is a no-op upsert.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct ChatMessage {
+    role: String,
+    #[serde(default)]
+    content: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct ChatRow {
+    messages: Vec<ChatMessage>,
+}
+
+/// Try to parse one JSONL line as either the native Solodit shape
+/// or the `OpenAI` fine-tuning chat shape. Returns `None` if neither
+/// shape parses cleanly — in which case the caller logs the error.
+fn parse_any_row(line: &str) -> Result<SoloditFindingRow, String> {
+    // Fast path: native Solodit shape.
+    if let Ok(row) = serde_json::from_str::<SoloditFindingRow>(line) {
+        return Ok(row);
+    }
+    // Fallback: chat-completion / fine-tuning shape.
+    let chat: ChatRow = serde_json::from_str(line)
+        .map_err(|e| format!("neither solodit nor chat shape parsed: {e}"))?;
+    let user = chat
+        .messages
+        .iter()
+        .find(|m| m.role == "user")
+        .ok_or_else(|| "chat row missing user message".to_string())?;
+    let assistant = chat
+        .messages
+        .iter()
+        .find(|m| m.role == "assistant")
+        .ok_or_else(|| "chat row missing assistant message".to_string())?;
+    let title_raw = user
+        .content
+        .trim()
+        .strip_prefix("Analyze the following vulnerability report:")
+        .unwrap_or(&user.content)
+        .trim()
+        .to_string();
+    let severity = severity_from_bracket_tag(&title_raw);
+    // Deterministic id from content — stable across re-runs, so
+    // re-ingesting the same dump upserts rather than duplicates.
+    let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+    <sha2::Sha256 as sha2::Digest>::update(&mut hasher, title_raw.as_bytes());
+    <sha2::Sha256 as sha2::Digest>::update(&mut hasher, b"\0");
+    <sha2::Sha256 as sha2::Digest>::update(&mut hasher, assistant.content.as_bytes());
+    let id = format!("sol-{:x}", <sha2::Sha256 as sha2::Digest>::finalize(hasher));
+    Ok(SoloditFindingRow {
+        id,
+        title: title_raw,
+        body: assistant.content.clone(),
+        severity,
+        category: None,
+        project: None,
+        auditor: None,
+        report_url: None,
+        finding_url: None,
+        date: None,
+    })
+}
+
+/// Extract severity from a leading `[H-01]` / `[M-02]` / `[L-03]`
+/// bracketed tag. Returns `None` when no such tag is present or
+/// the letter isn't one we recognise.
+fn severity_from_bracket_tag(title: &str) -> Option<String> {
+    let trimmed = title.trim_start();
+    let rest = trimmed.strip_prefix('[')?;
+    let (tag, _) = rest.split_once(']')?;
+    let first = tag.chars().next()?;
+    match first.to_ascii_uppercase() {
+        'C' => Some("critical".into()),
+        'H' => Some("high".into()),
+        'M' => Some("medium".into()),
+        'L' => Some("low".into()),
+        'I' | 'Q' => Some("info".into()),
+        'G' => Some("gas".into()),
+        _ => None,
+    }
+}
+
 impl SoloditFindingRow {
     /// Convert to the source-neutral [`IngestRecord`] shape.
     #[must_use]
@@ -331,7 +428,7 @@ fn read_rows(
         if trimmed.is_empty() {
             continue;
         }
-        match serde_json::from_str::<SoloditFindingRow>(trimmed) {
+        match parse_any_row(trimmed) {
             Ok(row) => {
                 if cursor.is_some_and(|c| row.id.as_str() <= c) {
                     report.records_skipped += 1;
@@ -343,9 +440,7 @@ fn read_rows(
                 }
             }
             Err(e) => {
-                report
-                    .errors
-                    .push((format!("line:{}", line_no + 1), e.to_string()));
+                report.errors.push((format!("line:{}", line_no + 1), e));
             }
         }
     }
@@ -464,6 +559,37 @@ mod tests {
         let mut report = IngestReport::empty("solodit");
         let rows = read_rows(&path, None, Some(2), &mut report).unwrap();
         assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn parse_any_row_accepts_openai_chat_format() {
+        // `r##"..."##` because the body content contains `"#` (opening
+        // of a markdown header immediately after a JSON string).
+        let line = r##"{"messages":[{"role":"system","content":"sys"},{"role":"user","content":"Analyze the following vulnerability report: [H-01] Reentrancy bug"},{"role":"assistant","content":"# Lines of code\n\nfoo"}]}"##;
+        let row = parse_any_row(line).unwrap();
+        assert_eq!(row.title, "[H-01] Reentrancy bug");
+        assert_eq!(row.severity.as_deref(), Some("high"));
+        assert!(row.body.contains("Lines of code"));
+        // Deterministic id — same input gives same id.
+        let row2 = parse_any_row(line).unwrap();
+        assert_eq!(row.id, row2.id);
+        assert!(row.id.starts_with("sol-"));
+    }
+
+    #[test]
+    fn severity_from_bracket_tag_recognises_common_letters() {
+        assert_eq!(
+            severity_from_bracket_tag("[C-01] Crit"),
+            Some("critical".into())
+        );
+        assert_eq!(severity_from_bracket_tag("[H-01] High"), Some("high".into()));
+        assert_eq!(
+            severity_from_bracket_tag("[M-02] Med"),
+            Some("medium".into())
+        );
+        assert_eq!(severity_from_bracket_tag("[L-03] Low"), Some("low".into()));
+        assert_eq!(severity_from_bracket_tag("[G-04] Gas"), Some("gas".into()));
+        assert_eq!(severity_from_bracket_tag("plain title"), None);
     }
 
     #[test]
