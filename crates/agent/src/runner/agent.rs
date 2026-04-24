@@ -17,12 +17,14 @@ use basilisk_core::Config;
 use basilisk_git::RepoCache;
 use basilisk_github::GithubClient;
 use basilisk_llm::{
-    CompletionRequest, ContentBlock, LlmBackend, Message, MessageRole, PricingTable, TokenUsage,
-    ToolChoice,
+    BlockType, CompletionRequest, CompletionResponse, ContentBlock, Delta, LlmBackend, LlmError,
+    Message, MessageRole, PricingTable, StopReason, StreamEvent, TokenUsage, ToolChoice,
 };
+use futures::StreamExt;
 use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
 
+use crate::runner::observer::{AgentObserver, NoopObserver};
 use crate::runner::types::{AgentError, AgentOutcome, AgentStats, AgentStopReason, Budget};
 use crate::session::{SessionStatus, SessionStore, TurnRole};
 use crate::tool::{SessionId, ToolContext, ToolRegistry, ToolResult};
@@ -158,16 +160,33 @@ impl AgentRunner {
         self.budget_check(stats, started_at.elapsed())
     }
 
-    /// Drive one tool-use loop end-to-end.
+    /// Drive one tool-use loop end-to-end with no observer attached.
+    ///
+    /// Equivalent to [`run_with_observer`](Self::run_with_observer) with
+    /// a [`NoopObserver`]. See that method for the full semantics.
+    pub async fn run(
+        &self,
+        target: impl Into<String>,
+        initial_user_message: impl Into<String>,
+        note: Option<String>,
+    ) -> Result<AgentOutcome, AgentError> {
+        self.run_with_observer(target, initial_user_message, note, &NoopObserver)
+            .await
+    }
+
+    /// Drive one tool-use loop end-to-end, firing `observer` hooks as
+    /// the session progresses.
     ///
     /// Creates a session, seeds it with `initial_user_message`, then
     /// loops:
     ///
     ///   1. Check the budget; stop if any cap is tripped.
-    ///   2. Send the conversation history + tool catalogue to the LLM.
+    ///   2. Send the conversation history + tool catalogue to the LLM,
+    ///      streaming the response and firing `on_text_delta` /
+    ///      `on_tool_use_start` hooks as events arrive.
     ///   3. Record the assistant turn (with token + cost accounting).
     ///   4. Dispatch every `ToolUse` block in iteration order, persisting
-    ///      one `tool_calls` row per call.
+    ///      one `tool_calls` row per call and firing `on_tool_result`.
     ///   5. If `finalize_report` was among them, persist the final report
     ///      and exit cleanly.
     ///   6. Otherwise, feed each tool result back as a `ToolResult` block
@@ -185,11 +204,12 @@ impl AgentRunner {
     // chase the control flow across helpers without making any one
     // piece independently meaningful.
     #[allow(clippy::too_many_lines)]
-    pub async fn run(
+    pub async fn run_with_observer(
         &self,
         target: impl Into<String>,
         initial_user_message: impl Into<String>,
         note: Option<String>,
+        observer: &dyn AgentObserver,
     ) -> Result<AgentOutcome, AgentError> {
         let target = target.into();
         let initial = initial_user_message.into();
@@ -203,6 +223,7 @@ impl AgentRunner {
             prompt_hash,
             note,
         )?;
+        observer.on_session_start(&session_id);
         info!(
             session = %session_id,
             target = %target,
@@ -248,8 +269,17 @@ impl AgentRunner {
                 cache_system_prompt: true,
             };
 
+            // `turn` used by observer hooks is 1-based and names the
+            // turn we're *about* to execute, matching stats.turns after
+            // the accumulator fires below.
+            let turn_index_for_observer = stats.turns.saturating_add(1);
+            observer.on_turn_start(turn_index_for_observer);
+
             let turn_started = SystemTime::now();
-            let response = match self.backend.complete(request).await {
+            let response = match self
+                .stream_one_turn(turn_index_for_observer, request, observer)
+                .await
+            {
                 Ok(r) => r,
                 Err(e) => {
                     warn!(error = %e, "llm backend failed");
@@ -300,6 +330,7 @@ impl AgentRunner {
                     is_err,
                     duration_ms,
                 )?;
+                observer.on_tool_result(turn_index_for_observer, name, !is_err, duration_ms);
                 stats.tool_calls = stats.tool_calls.saturating_add(1);
                 call_index = call_index.saturating_add(1);
 
@@ -340,6 +371,8 @@ impl AgentRunner {
                 role: MessageRole::Assistant,
                 content: assistant_blocks,
             });
+
+            observer.on_turn_end(turn_index_for_observer, &stats);
 
             if finalize_seen {
                 break AgentStopReason::ReportFinalized;
@@ -389,14 +422,145 @@ impl AgentRunner {
             "agent session ended"
         );
 
-        Ok(AgentOutcome {
+        let outcome = AgentOutcome {
             session_id,
             stop_reason,
             stats,
             final_report,
             started_at,
             ended_at,
+        };
+        observer.on_session_complete(&outcome);
+        Ok(outcome)
+    }
+
+    /// Consume one turn's worth of streaming events, firing observer
+    /// hooks as we go, and fold the result into a buffered
+    /// [`CompletionResponse`] for the loop to record + dispatch.
+    ///
+    /// This mirrors `basilisk_llm::backend::collect_stream` but
+    /// interleaves observer calls so the CLI can print tokens live.
+    async fn stream_one_turn(
+        &self,
+        turn: u32,
+        request: CompletionRequest,
+        observer: &dyn AgentObserver,
+    ) -> Result<CompletionResponse, LlmError> {
+        let mut stream = self.backend.stream(request).await?;
+        let mut model = String::new();
+        let mut blocks: Vec<StreamingBlock> = Vec::new();
+        let mut stop_reason = StopReason::EndTurn;
+        let mut usage = TokenUsage::default();
+
+        while let Some(event) = stream.next().await {
+            match event? {
+                StreamEvent::MessageStart { model: m } => {
+                    model = m;
+                }
+                StreamEvent::ContentBlockStart { index, block } => {
+                    let idx = index as usize;
+                    if blocks.len() <= idx {
+                        blocks.resize_with(idx + 1, StreamingBlock::default);
+                    }
+                    if let BlockType::ToolUse { id, name } = &block {
+                        observer.on_tool_use_start(turn, name, id);
+                    }
+                    blocks[idx] = StreamingBlock::from_start(block);
+                }
+                StreamEvent::ContentBlockDelta { index, delta } => {
+                    let idx = index as usize;
+                    if idx < blocks.len() {
+                        if let Delta::TextDelta(s) = &delta {
+                            observer.on_text_delta(turn, s);
+                        }
+                        blocks[idx].push(delta);
+                    }
+                }
+                StreamEvent::ContentBlockStop { .. } => {}
+                StreamEvent::MessageDelta {
+                    stop_reason: sr,
+                    usage: u,
+                } => {
+                    if let Some(sr) = sr {
+                        stop_reason = sr;
+                    }
+                    if let Some(u) = u {
+                        // Output-token count arrives in the final
+                        // MessageDelta; input-token count is seeded from
+                        // MessageStart. Take the max so streaming and
+                        // non-streaming callers see the same numbers.
+                        usage.input_tokens = usage.input_tokens.max(u.input_tokens);
+                        usage.output_tokens = usage.output_tokens.max(u.output_tokens);
+                        if u.cache_read_input_tokens.is_some() {
+                            usage.cache_read_input_tokens = u.cache_read_input_tokens;
+                        }
+                        if u.cache_creation_input_tokens.is_some() {
+                            usage.cache_creation_input_tokens = u.cache_creation_input_tokens;
+                        }
+                    }
+                }
+                StreamEvent::MessageStop => break,
+            }
+        }
+
+        let content: Result<Vec<ContentBlock>, LlmError> =
+            blocks.into_iter().map(StreamingBlock::finish).collect();
+        Ok(CompletionResponse {
+            content: content?,
+            stop_reason,
+            usage,
+            model,
         })
+    }
+}
+
+/// Accumulator for one in-flight content block.
+///
+/// Mirrors the private `PartialBlock` used by
+/// `basilisk_llm::backend::collect_stream`; duplicated here so the
+/// runner can interleave observer hooks between events without adding
+/// an observer dependency to the LLM crate.
+#[derive(Default)]
+struct StreamingBlock {
+    kind: Option<BlockType>,
+    text: String,
+    input_json: String,
+}
+
+impl StreamingBlock {
+    fn from_start(block: BlockType) -> Self {
+        Self {
+            kind: Some(block),
+            text: String::new(),
+            input_json: String::new(),
+        }
+    }
+
+    fn push(&mut self, delta: Delta) {
+        match delta {
+            Delta::TextDelta(s) => self.text.push_str(&s),
+            Delta::InputJsonDelta(s) => self.input_json.push_str(&s),
+        }
+    }
+
+    fn finish(self) -> Result<ContentBlock, LlmError> {
+        match self.kind {
+            Some(BlockType::Text) => Ok(ContentBlock::Text { text: self.text }),
+            Some(BlockType::ToolUse { id, name }) => {
+                // Anthropic sends `{}` when the model produced no input.
+                let raw = if self.input_json.is_empty() {
+                    "{}".to_string()
+                } else {
+                    self.input_json
+                };
+                let input: serde_json::Value = serde_json::from_str(&raw)
+                    .map_err(|e| LlmError::ParseError(format!("tool_use input: {e}")))?;
+                Ok(ContentBlock::ToolUse { id, name, input })
+            }
+            None => Err(LlmError::ParseError(
+                "content block delta without start".into(),
+            )),
+        }
     }
 }
 

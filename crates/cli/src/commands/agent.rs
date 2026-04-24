@@ -12,14 +12,15 @@
 //! The system prompt in `CP6a` is a short placeholder; `CP8` replaces
 //! it with the production recon brief.
 
+use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use basilisk_agent::{
-    default_db_path, standard_registry, AgentOutcome, AgentRunner, AgentStopReason, Budget,
-    SessionStore,
+    default_db_path, standard_registry, AgentObserver, AgentOutcome, AgentRunner, AgentStats,
+    AgentStopReason, Budget, NoopObserver, SessionId, SessionStore,
 };
 use basilisk_core::Config;
 use basilisk_git::RepoCache;
@@ -85,6 +86,12 @@ pub struct AgentArgs {
     /// Output format for the final summary.
     #[arg(long, value_enum, default_value_t = OutputFormat::Pretty)]
     pub output: OutputFormat,
+
+    /// Suppress the live progress stream on stderr. Has no effect on
+    /// the final summary (`--output`). Useful when redirecting output
+    /// for scripting or when a non-TTY consumer doesn't want noise.
+    #[arg(long)]
+    pub quiet: bool,
 }
 
 pub async fn run(args: &AgentArgs, config: &Config) -> Result<()> {
@@ -146,17 +153,108 @@ pub async fn run(args: &AgentArgs, config: &Config) -> Result<()> {
     );
     eprintln!("  session db: {}", db_path.display());
 
+    let pretty = PrettyObserver::new();
+    let noop = NoopObserver;
+    let observer: &dyn AgentObserver = if args.quiet {
+        &noop
+    } else {
+        &pretty
+    };
+
     let outcome = runner
-        .run(
+        .run_with_observer(
             args.target.clone(),
             build_initial_message(&args.target, args.note.as_deref()),
             args.note.clone(),
+            observer,
         )
         .await
         .context("agent run failed")?;
 
     render_outcome(&outcome, args.output);
     Ok(())
+}
+
+/// Stderr-writing observer that prints the live progress of an agent
+/// run: turn headers, assistant text as it streams, and one line per
+/// tool call (`>` when it starts, `<` with duration when it returns).
+///
+/// Output goes to stderr so `--output json` piping stays clean. The
+/// only shared state is a flag tracking whether the current turn has
+/// emitted text, so we can insert a newline before the first tool line
+/// without leaving a stray blank line when the turn is pure tool use.
+struct PrettyObserver {
+    state: Mutex<PrettyState>,
+}
+
+#[derive(Default)]
+struct PrettyState {
+    text_this_turn: bool,
+}
+
+impl PrettyObserver {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(PrettyState::default()),
+        }
+    }
+
+    fn write_line(msg: &str) {
+        let mut err = std::io::stderr().lock();
+        let _ = writeln!(err, "{msg}");
+    }
+}
+
+impl AgentObserver for PrettyObserver {
+    fn on_session_start(&self, session_id: &SessionId) {
+        Self::write_line(&format!("── session {session_id} ──"));
+    }
+
+    fn on_turn_start(&self, turn: u32) {
+        let mut s = self.state.lock().expect("pretty-observer state poisoned");
+        s.text_this_turn = false;
+        drop(s);
+        Self::write_line(&format!("━━ turn {turn} ━━"));
+    }
+
+    fn on_text_delta(&self, _turn: u32, text: &str) {
+        {
+            let mut s = self.state.lock().expect("pretty-observer state poisoned");
+            s.text_this_turn = true;
+        }
+        let mut err = std::io::stderr().lock();
+        let _ = err.write_all(text.as_bytes());
+        let _ = err.flush();
+    }
+
+    fn on_tool_use_start(&self, _turn: u32, name: &str, _tool_use_id: &str) {
+        let had_text = {
+            let s = self.state.lock().expect("pretty-observer state poisoned");
+            s.text_this_turn
+        };
+        if had_text {
+            Self::write_line("");
+        }
+        Self::write_line(&format!("> {name}"));
+    }
+
+    fn on_tool_result(&self, _turn: u32, name: &str, ok: bool, duration_ms: u64) {
+        let status = if ok { "ok" } else { "ERROR" };
+        Self::write_line(&format!("< {name}  {status}  ({duration_ms}ms)"));
+    }
+
+    fn on_turn_end(&self, _turn: u32, stats: &AgentStats) {
+        Self::write_line(&format!(
+            "── turn end: {} tokens cumulative, ~{}¢ ──",
+            stats.total_tokens(),
+            stats.cost_cents,
+        ));
+    }
+
+    fn on_session_complete(&self, _outcome: &AgentOutcome) {
+        // Final summary is rendered by `render_outcome` on stdout; we
+        // don't echo it here to avoid double-printing.
+    }
 }
 
 fn build_budget(args: &AgentArgs) -> Budget {
@@ -277,6 +375,7 @@ mod tests {
             max_cost_cents: Some(100),
             max_duration_secs: None,
             output: OutputFormat::Pretty,
+            quiet: false,
         };
         let b = build_budget(&args);
         assert_eq!(b.max_turns, 5);

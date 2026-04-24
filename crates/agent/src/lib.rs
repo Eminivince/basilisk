@@ -19,7 +19,10 @@ pub mod testing;
 pub mod tool;
 pub mod tools;
 
-pub use runner::{AgentError, AgentOutcome, AgentRunner, AgentStats, AgentStopReason, Budget};
+pub use runner::{
+    AgentError, AgentObserver, AgentOutcome, AgentRunner, AgentStats, AgentStopReason, Budget,
+    NoopObserver,
+};
 pub use session::{
     default_db_path, LoadedSession, SessionError, SessionRecord, SessionStatus, SessionStore,
     SessionSummary, ToolCallRecord, TurnRecord, TurnRole,

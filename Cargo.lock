@@ -832,6 +832,7 @@ dependencies = [
  "basilisk-project",
  "basilisk-rpc",
  "dirs",
+ "futures",
  "hex",
  "regex",
  "rusqlite",

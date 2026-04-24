@@ -17,7 +17,10 @@ use std::sync::Arc;
 
 use basilisk_agent::testing::{build_test_runner, EchoTool, MockLlmBackend, MockResponse};
 use basilisk_agent::tools::{Confidence, FINALIZE_REPORT_NAME};
-use basilisk_agent::{AgentStopReason, Budget, SessionStatus, TurnRole};
+use basilisk_agent::{
+    AgentObserver, AgentOutcome, AgentStats, AgentStopReason, Budget, SessionId, SessionStatus,
+    TurnRole,
+};
 use basilisk_llm::{LlmBackend, LlmError, TokenUsage};
 
 fn make_runner(
@@ -496,4 +499,170 @@ async fn accumulated_token_usage_includes_cache_reads_and_writes() {
     assert_eq!(outcome.stats.usage.cache_read_input_tokens, Some(10));
     assert_eq!(outcome.stats.usage.cache_creation_input_tokens, Some(5));
     assert_eq!(outcome.stats.total_tokens(), 85);
+}
+
+/// Recording observer — captures every hook invocation in order so the
+/// test can assert the full event sequence.
+#[derive(Default)]
+struct RecordingObserver {
+    events: std::sync::Mutex<Vec<String>>,
+}
+
+impl RecordingObserver {
+    fn take(&self) -> Vec<String> {
+        std::mem::take(&mut *self.events.lock().unwrap())
+    }
+    fn push(&self, s: impl Into<String>) {
+        self.events.lock().unwrap().push(s.into());
+    }
+}
+
+impl AgentObserver for RecordingObserver {
+    fn on_session_start(&self, _: &SessionId) {
+        self.push("session_start");
+    }
+    fn on_turn_start(&self, turn: u32) {
+        self.push(format!("turn_start/{turn}"));
+    }
+    fn on_text_delta(&self, turn: u32, text: &str) {
+        self.push(format!("text/{turn}/{text}"));
+    }
+    fn on_tool_use_start(&self, turn: u32, name: &str, _id: &str) {
+        self.push(format!("tool_start/{turn}/{name}"));
+    }
+    fn on_tool_result(&self, turn: u32, name: &str, ok: bool, _: u64) {
+        self.push(format!("tool_result/{turn}/{name}/{ok}"));
+    }
+    fn on_turn_end(&self, turn: u32, stats: &AgentStats) {
+        self.push(format!("turn_end/{turn}/turns={}", stats.turns));
+    }
+    fn on_session_complete(&self, outcome: &AgentOutcome) {
+        self.push(format!("session_complete/{}", outcome.stop_reason.tag()));
+    }
+}
+
+#[tokio::test]
+async fn observer_fires_hooks_in_order_across_multi_turn_session() {
+    // Turn 1: text + echo tool_use. Turn 2: finalize.
+    let backend = Arc::new(MockLlmBackend::new("claude-opus-4-7"));
+    backend.push(
+        MockResponse::new()
+            .text("starting recon")
+            .tool_use("tu_e", EchoTool::NAME, serde_json::json!({"k": "v"}))
+            .usage(120, 50)
+            .build(),
+    );
+    backend.push(
+        MockResponse::new()
+            .text("done, writing brief")
+            .finalize("tu_f", "# brief", Confidence::Medium, None)
+            .usage(130, 30)
+            .build(),
+    );
+
+    let (runner, _dir) = make_runner(backend, Budget::default());
+    let obs = RecordingObserver::default();
+    let outcome = runner
+        .run_with_observer("eth/0xabc", "go", None, &obs)
+        .await
+        .expect("run ok");
+    assert_eq!(outcome.stop_reason, AgentStopReason::ReportFinalized);
+
+    let events = obs.take();
+
+    // Session boundaries at the extremes.
+    assert_eq!(events.first().unwrap(), "session_start");
+    assert_eq!(
+        events.last().unwrap(),
+        "session_complete/report_finalized"
+    );
+
+    // Every turn has a start/end pair in the right order.
+    let turn_start_positions: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.starts_with("turn_start/"))
+        .map(|(i, _)| i)
+        .collect();
+    let turn_end_positions: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.starts_with("turn_end/"))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(turn_start_positions.len(), 2, "two turn_starts");
+    assert_eq!(turn_end_positions.len(), 2, "two turn_ends");
+    assert!(turn_start_positions[0] < turn_end_positions[0]);
+    assert!(turn_end_positions[0] < turn_start_positions[1]);
+    assert!(turn_start_positions[1] < turn_end_positions[1]);
+
+    // Turn 1 fires: text delta → echo tool_start (while streaming) →
+    // echo tool_result (after dispatch) → turn_end.
+    let turn1: Vec<&String> = events[turn_start_positions[0]..=turn_end_positions[0]]
+        .iter()
+        .collect();
+    let has = |needle: &str| turn1.iter().any(|e| e.as_str() == needle);
+    assert!(has("text/1/starting recon"), "turn1 text: {turn1:?}");
+    assert!(has("tool_start/1/echo"), "turn1 tool_start: {turn1:?}");
+    assert!(has("tool_result/1/echo/true"), "turn1 tool_result: {turn1:?}");
+
+    // Tool start must precede tool result (streamed before dispatch).
+    let start_idx = turn1
+        .iter()
+        .position(|e| e.as_str() == "tool_start/1/echo")
+        .unwrap();
+    let result_idx = turn1
+        .iter()
+        .position(|e| e.as_str() == "tool_result/1/echo/true")
+        .unwrap();
+    assert!(start_idx < result_idx);
+
+    // Turn 2 finalizes; we see the finalize_report tool_start + result.
+    let turn2: Vec<&String> = events[turn_start_positions[1]..=turn_end_positions[1]]
+        .iter()
+        .collect();
+    assert!(
+        turn2
+            .iter()
+            .any(|e| e.as_str() == "tool_start/2/finalize_report"),
+        "turn2 tool_start: {turn2:?}",
+    );
+    assert!(
+        turn2
+            .iter()
+            .any(|e| e.as_str() == "tool_result/2/finalize_report/true"),
+        "turn2 tool_result: {turn2:?}",
+    );
+}
+
+#[tokio::test]
+async fn observer_does_not_receive_tool_events_on_llm_error() {
+    // Backend errors immediately — no turn should fire tool hooks.
+    let backend = Arc::new(MockLlmBackend::new("claude-opus-4-7"));
+    backend.push_err(LlmError::Other("network went away".into()));
+
+    let (runner, _dir) = make_runner(backend, Budget::default());
+    let obs = RecordingObserver::default();
+    let outcome = runner
+        .run_with_observer("eth/0x", "go", None, &obs)
+        .await
+        .unwrap();
+
+    let events = obs.take();
+    assert!(
+        matches!(outcome.stop_reason, AgentStopReason::LlmError { .. }),
+        "{:?}",
+        outcome.stop_reason,
+    );
+    assert!(events.iter().any(|e| e.starts_with("turn_start/")));
+    assert!(
+        events
+            .iter()
+            .all(|e| !e.starts_with("tool_start/") && !e.starts_with("tool_result/")),
+        "no tool events expected, got {events:?}",
+    );
+    assert!(events
+        .last()
+        .unwrap()
+        .starts_with("session_complete/llm_error"));
 }

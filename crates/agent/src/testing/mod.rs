@@ -28,9 +28,10 @@ use basilisk_core::Config;
 use basilisk_git::RepoCache;
 use basilisk_github::GithubClient;
 use basilisk_llm::{
-    CompletionRequest, CompletionResponse, CompletionStream, ContentBlock, LlmBackend, LlmError,
-    StopReason, TokenUsage,
+    BlockType, CompletionRequest, CompletionResponse, CompletionStream, ContentBlock, Delta,
+    LlmBackend, LlmError, StopReason, StreamEvent, TokenUsage,
 };
+use futures::stream;
 
 use crate::runner::AgentRunner;
 use crate::session::SessionStore;
@@ -42,11 +43,12 @@ use crate::Budget;
 /// queued item; calling beyond the queue returns an [`LlmError`] so
 /// tests fail loudly rather than hang.
 ///
-/// Overrides `complete` directly rather than rebuilding a streaming
-/// sequence — `CP5c`'s loop uses `complete`, and a stream-backed mock
-/// would just hand-roll the same events back for the default `complete`
-/// to fold them. When the loop switches to raw `stream` in `CP6`, we'll
-/// extend this with a stream-aware variant.
+/// Implements both `complete` and `stream`: each `stream` call pops
+/// one queued response and replays it as a synthetic `StreamEvent`
+/// sequence in Anthropic's canonical order (`MessageStart` →
+/// `ContentBlockStart`/`Delta`/`Stop` per block → `MessageDelta` →
+/// `MessageStop`). This keeps `CP5`'s buffered-`complete` tests and
+/// `CP6+`'s streaming runner driven off one queue.
 pub struct MockLlmBackend {
     id: String,
     queue: Mutex<VecDeque<Result<CompletionResponse, LlmError>>>,
@@ -108,10 +110,73 @@ impl LlmBackend for MockLlmBackend {
     }
 
     async fn stream(&self, _request: CompletionRequest) -> Result<CompletionStream, LlmError> {
-        Err(LlmError::Other(
-            "MockLlmBackend does not stream; call complete()".into(),
-        ))
+        let next = self
+            .queue
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| Err(LlmError::Other("mock backend exhausted".into())))?;
+        Ok(Box::pin(stream::iter(
+            completion_response_to_events(next).into_iter().map(Ok),
+        )))
     }
+}
+
+/// Replay a [`CompletionResponse`] as the `StreamEvent` sequence a real
+/// provider would emit. Used by [`MockLlmBackend::stream`] and available
+/// to tests that want to drive a streaming-only consumer without wiring
+/// up the full `MockLlmBackend`.
+#[must_use]
+pub fn completion_response_to_events(response: CompletionResponse) -> Vec<StreamEvent> {
+    let mut events = vec![StreamEvent::MessageStart {
+        model: response.model,
+    }];
+
+    for (idx, block) in response.content.into_iter().enumerate() {
+        let index = u32::try_from(idx).expect("far fewer than u32::MAX content blocks");
+        match block {
+            ContentBlock::Text { text } => {
+                events.push(StreamEvent::ContentBlockStart {
+                    index,
+                    block: BlockType::Text,
+                });
+                if !text.is_empty() {
+                    events.push(StreamEvent::ContentBlockDelta {
+                        index,
+                        delta: Delta::TextDelta(text),
+                    });
+                }
+                events.push(StreamEvent::ContentBlockStop { index });
+            }
+            ContentBlock::ToolUse { id, name, input } => {
+                events.push(StreamEvent::ContentBlockStart {
+                    index,
+                    block: BlockType::ToolUse { id, name },
+                });
+                // Real providers stream the input as many JSON
+                // fragments; emitting it as one chunk is indistinguishable
+                // downstream since the runner concatenates before parsing.
+                let json = serde_json::to_string(&input)
+                    .unwrap_or_else(|_| "{}".to_string());
+                events.push(StreamEvent::ContentBlockDelta {
+                    index,
+                    delta: Delta::InputJsonDelta(json),
+                });
+                events.push(StreamEvent::ContentBlockStop { index });
+            }
+            ContentBlock::ToolResult { .. } => {
+                // Models never produce ToolResult blocks — those are
+                // user-role inputs. Skip if a test somehow includes one.
+            }
+        }
+    }
+
+    events.push(StreamEvent::MessageDelta {
+        stop_reason: Some(response.stop_reason),
+        usage: Some(response.usage),
+    });
+    events.push(StreamEvent::MessageStop);
+    events
 }
 
 /// Build one [`CompletionResponse`] fluently.
