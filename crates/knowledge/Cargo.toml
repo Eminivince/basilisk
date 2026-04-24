@@ -1,0 +1,28 @@
+[package]
+name = "basilisk-knowledge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Public knowledge-base API: search, record findings, corrections. Layered on embeddings + vector."
+
+[lints]
+workspace = true
+
+[dependencies]
+basilisk-embeddings = { workspace = true }
+basilisk-vector = { workspace = true }
+
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
