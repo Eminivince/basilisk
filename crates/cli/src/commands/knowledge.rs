@@ -25,6 +25,7 @@ use basilisk_embeddings::{
     build_provider, EmbeddingProvider, ProviderKind as EmbedProviderKind, ProviderSelection,
 };
 use basilisk_git::RepoCache;
+use basilisk_github::GithubClient;
 use basilisk_ingest::{
     IngestOptions, Ingester, OzAdvisoriesIngester, ProtocolIngester, ProtocolSource,
     SoloditIngester, SwcIngester,
@@ -336,6 +337,14 @@ async fn run_ingest(args: &IngestArgs, config: &Config) -> Result<()> {
     Ok(())
 }
 
+/// Build a `GithubClient` from `config.github_token`. Works without
+/// a token (60/hour unauthenticated is fine for default-branch
+/// lookups); the `None` branch here only fires if client
+/// construction itself fails (network stack, etc.).
+fn build_github_client(config: &Config) -> Option<GithubClient> {
+    GithubClient::new(config.github_token.as_deref()).ok()
+}
+
 /// Return every ingester the CLI knows how to build, in a stable
 /// order so `--all` produces a reproducible sequence.
 fn available_ingesters(config: &Config) -> Vec<Box<dyn Ingester>> {
@@ -343,9 +352,14 @@ fn available_ingesters(config: &Config) -> Vec<Box<dyn Ingester>> {
         RepoCache::open()
             .unwrap_or_else(|_| panic!("can't open repo cache — check filesystem permissions")),
     );
+    let github = build_github_client(config);
     let mut out: Vec<Box<dyn Ingester>> = Vec::new();
     out.push(Box::new(SoloditIngester::new()));
-    out.push(Box::new(SwcIngester::new(Arc::clone(&repo_cache))));
+    let mut swc = SwcIngester::new(Arc::clone(&repo_cache));
+    if let Some(gh) = github.clone() {
+        swc = swc.with_github(gh);
+    }
+    out.push(Box::new(swc));
     let mut oz = OzAdvisoriesIngester::new();
     if let Some(tok) = &config.github_token {
         oz = oz.with_token(tok.clone());
@@ -359,7 +373,11 @@ fn ingester_by_name(name: &str, config: &Config) -> Result<Option<Box<dyn Ingest
         "solodit" => Ok(Some(Box::new(SoloditIngester::new()))),
         "swc" => {
             let repo_cache = Arc::new(RepoCache::open().context("opening repo cache")?);
-            Ok(Some(Box::new(SwcIngester::new(repo_cache))))
+            let mut swc = SwcIngester::new(repo_cache);
+            if let Some(gh) = build_github_client(config) {
+                swc = swc.with_github(gh);
+            }
+            Ok(Some(Box::new(swc)))
         }
         "openzeppelin" => {
             let mut oz = OzAdvisoriesIngester::new();
@@ -381,7 +399,10 @@ async fn run_add_protocol(args: &AddProtocolArgs, config: &Config) -> Result<()>
     } else {
         None
     };
-    let ingester = ProtocolIngester::new(args.engagement_id.clone(), source, repo_cache);
+    let mut ingester = ProtocolIngester::new(args.engagement_id.clone(), source, repo_cache);
+    if let Some(gh) = build_github_client(config) {
+        ingester = ingester.with_github(gh);
+    }
     let store = open_store().await?;
     let embeddings = build_embeddings(config)?;
     println!(

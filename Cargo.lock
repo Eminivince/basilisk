@@ -1024,8 +1024,10 @@ name = "basilisk-ingest"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "basilisk-core",
  "basilisk-embeddings",
  "basilisk-git",
+ "basilisk-github",
  "basilisk-vector",
  "dirs",
  "hex",

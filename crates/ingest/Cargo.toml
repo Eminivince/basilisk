@@ -12,8 +12,10 @@ description = "ETL pipelines for Basilisk's knowledge base. Source-specific inge
 workspace = true
 
 [dependencies]
+basilisk-core = { workspace = true }
 basilisk-embeddings = { workspace = true }
 basilisk-git = { workspace = true }
+basilisk-github = { workspace = true }
 basilisk-vector = { workspace = true }
 
 async-trait = { workspace = true }

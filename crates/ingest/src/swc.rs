@@ -24,8 +24,10 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use basilisk_core::GitRef;
 use basilisk_embeddings::{EmbeddingInput, EmbeddingProvider};
 use basilisk_git::{CloneStrategy, FetchOptions, RepoCache};
+use basilisk_github::GithubClient;
 use basilisk_vector::{schema, VectorStore};
 
 use crate::{
@@ -129,11 +131,25 @@ pub fn entry_into_ingest_record(entry: SwcEntry) -> IngestRecord {
 /// The SWC [`Ingester`].
 pub struct SwcIngester {
     cache: Arc<RepoCache>,
+    github: Option<GithubClient>,
 }
 
 impl SwcIngester {
     pub fn new(cache: Arc<RepoCache>) -> Self {
-        Self { cache }
+        Self {
+            cache,
+            github: None,
+        }
+    }
+
+    /// Provide a `GithubClient` used for default-branch lookup.
+    /// Optional — the ingester otherwise falls back to pinning
+    /// `refs/heads/master` (SWC-registry's historical default,
+    /// and the repo is effectively frozen).
+    #[must_use]
+    pub fn with_github(mut self, client: GithubClient) -> Self {
+        self.github = Some(client);
+        self
     }
 }
 
@@ -159,16 +175,26 @@ impl Ingester for SwcIngester {
 
         // Fetch the registry. Shallow-clone since SWC history
         // isn't relevant — we want the current entries only.
+        //
+        // If the caller wired a GithubClient, use it so `None` as
+        // the ref resolves via default-branch lookup. Otherwise
+        // pin `master` — SWC-registry is frozen and that's its
+        // historical default.
+        let (ref_, github) = if self.github.is_some() {
+            (None, self.github.clone())
+        } else {
+            (Some(GitRef::Branch("master".into())), None)
+        };
         let fetched = self
             .cache
             .fetch(
                 SWC_OWNER,
                 SWC_REPO,
-                None,
+                ref_,
                 FetchOptions {
                     strategy: CloneStrategy::Shallow,
                     force_refresh: false,
-                    github: None,
+                    github,
                 },
             )
             .await

@@ -33,6 +33,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use basilisk_embeddings::{EmbeddingInput, EmbeddingProvider};
 use basilisk_git::{CloneStrategy, FetchOptions, RepoCache};
+use basilisk_github::GithubClient;
 use basilisk_vector::{schema, Metadata, VectorStore};
 use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
 use sha2::{Digest, Sha256};
@@ -99,6 +100,7 @@ pub struct ProtocolIngester {
     engagement_id: String,
     source: ProtocolSource,
     repo_cache: Option<Arc<RepoCache>>,
+    github: Option<GithubClient>,
 }
 
 impl ProtocolIngester {
@@ -117,7 +119,18 @@ impl ProtocolIngester {
             engagement_id: engagement_id.into(),
             source,
             repo_cache,
+            github: None,
         }
+    }
+
+    /// Wire a `GithubClient` used for default-branch lookup when
+    /// the source is [`ProtocolSource::GithubDir`]. Without it,
+    /// default-branch resolution isn't possible — the clone will
+    /// fail for repos whose default isn't `master`.
+    #[must_use]
+    pub fn with_github(mut self, client: GithubClient) -> Self {
+        self.github = Some(client);
+        self
     }
 
     pub fn engagement_id(&self) -> &str {
@@ -344,7 +357,7 @@ impl ProtocolIngester {
                 FetchOptions {
                     strategy: CloneStrategy::Shallow,
                     force_refresh: false,
-                    github: None,
+                    github: self.github.clone(),
                 },
             )
             .await
