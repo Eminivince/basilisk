@@ -291,7 +291,10 @@ async fn agent_live_usdc_mainnet_proxy() {
         &cache_dir,
         Budget {
             max_turns: 25,
-            max_tokens_total: 300_000,
+            // USDC's proxy + FiatTokenV2_2 implementation is ~280k
+            // tokens on a typical OpenRouter run (no prompt caching);
+            // 500k gives comfortable headroom for one nudge turn.
+            max_tokens_total: 500_000,
             max_cost_cents: 150, // USDC is proxy-heavy; a bit more headroom than $1
             max_duration: Duration::from_secs(900),
         },
@@ -335,8 +338,18 @@ async fn agent_live_aave_v3_pool_mainnet() {
         &cache_dir,
         Budget {
             max_turns: 40,
-            max_tokens_total: 500_000,
-            max_cost_cents: 300, // spec: under $3
+            // Aave V3 Pool is a proxy fronting a ~9-library diamond
+            // -like implementation — resolving the full system + the
+            // Sourcify source produces tool results north of 200k
+            // tokens each, and the conversation history accumulates
+            // across turns. On OpenRouter (no Anthropic prompt
+            // caching passthrough) a typical recon run burns ~600k
+            // tokens; 1M gives room for one nudge + investigative
+            // headroom. Native Anthropic with prompt caching enabled
+            // would hit the spec's $3 target — this budget matches
+            // the OpenRouter reality.
+            max_tokens_total: 1_000_000,
+            max_cost_cents: 300, // spec: under $3 (native Anthropic assumption)
             max_duration: Duration::from_secs(1200),
         },
     );
