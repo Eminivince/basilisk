@@ -1,9 +1,9 @@
 //! `finalize_report` — the agent's done signal.
 //!
 //! When called, the tool returns an `Ok` payload describing the final
-//! report. The agent loop (CP5) recognises this tool by name, extracts
+//! report. The agent loop (`CP5`) recognises this tool by name, extracts
 //! the payload as the session's final output, and stops the loop. For
-//! CP3 the tool is a regular tool implementation — the interception
+//! `CP3` the tool is a regular tool implementation — the interception
 //! logic lives where the loop lives.
 
 use async_trait::async_trait;
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::tool::{Tool, ToolContext, ToolResult};
 
-/// Canonical tool name. Kept as a `pub const` so CP5's loop can
+/// Canonical tool name. Kept as a `pub const` so `CP5`'s loop can
 /// compare against `finalize_report::NAME` without hardcoding the
 /// string literal in two places.
 pub const NAME: &str = "finalize_report";

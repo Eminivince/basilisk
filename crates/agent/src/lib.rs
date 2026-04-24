@@ -6,16 +6,21 @@
 //! prompts + the tool descriptions — our job is to expose capability,
 //! not to steer. See the checkpoint trail:
 //!
-//!  - **CP3** (this commit): [`Tool`] trait + [`ToolRegistry`] + the
+//!  - **`CP3`** (this commit): [`Tool`] trait + [`ToolRegistry`] + the
 //!    eleven standard recon tools. No loop yet; tools are callable in
 //!    isolation so they're testable without an LLM.
-//!  - **CP4**: SQLite-backed session persistence.
-//!  - **CP5**: the tool-use loop itself + budget enforcement.
+//!  - **`CP4`**: `SQLite`-backed session persistence.
+//!  - **`CP5`**: the tool-use loop itself + budget enforcement.
 //!  - **CP6+**: CLI wiring, system prompts, live tests.
 
+pub mod session;
 pub mod tool;
 pub mod tools;
 
+pub use session::{
+    SessionError, SessionRecord, SessionStatus, SessionStore, SessionSummary, ToolCallRecord,
+    TurnRecord, TurnRole,
+};
 pub use tool::{SessionId, Tool, ToolContext, ToolRegistry, ToolResult};
 pub use tools::{
     standard_registry, AnalyzeProject, ClassifyTarget, Confidence, FetchGithubRepo, FinalReport,

@@ -6,7 +6,7 @@
 //! descriptions, and input schemas; it decides when to call each one.
 //!
 //! [`standard_registry`] returns a `ToolRegistry` populated with every
-//! tool — the standard set for recon (set-6 CP3).
+//! tool — the standard set for recon (set-6 `CP3`).
 
 use std::sync::Arc;
 

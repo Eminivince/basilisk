@@ -19,15 +19,26 @@ use basilisk_github::GithubClient;
 use basilisk_llm::ToolDefinition;
 use serde::{Deserialize, Serialize};
 
-/// A stable session identifier. For CP3 this is just a thin newtype
-/// around a string; CP4 attaches session persistence (`SQLite`) and
-/// upgrades the generator to UUIDs.
+/// A stable session identifier.
+///
+/// Wraps a UUID-v4 string in production. Arbitrary strings are still
+/// accepted via [`Self::new`] so tests can use stable, readable ids
+/// like `"test-session"` — no validation, no surprises.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SessionId(pub String);
 
 impl SessionId {
+    /// Wrap an existing identifier. Used by `load_session` / resume paths
+    /// and by tests that want a known id.
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
+    }
+
+    /// Mint a fresh UUID-v4-backed identifier. `CP4b`'s `create_session`
+    /// calls this whenever the CLI starts a new run.
+    #[must_use]
+    pub fn generate() -> Self {
+        Self(uuid::Uuid::new_v4().to_string())
     }
 
     pub fn as_str(&self) -> &str {
