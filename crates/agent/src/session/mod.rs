@@ -18,7 +18,7 @@ pub(crate) mod time_serde;
 pub mod types;
 
 pub use error::SessionError;
-pub use store::{SessionStore, SCHEMA_VERSION};
+pub use store::{default_db_path, SessionStore, SCHEMA_VERSION};
 pub use types::{
     LoadedSession, SessionRecord, SessionStatus, SessionSummary, ToolCallRecord, TurnRecord,
     TurnRole,

@@ -613,6 +613,21 @@ impl std::fmt::Debug for SessionStore {
     }
 }
 
+/// Default path for the session database.
+///
+/// Prefers `dirs::data_local_dir()/basilisk/sessions.db`; falls back to
+/// `./.basilisk-data/sessions.db` in the current directory when no
+/// system data dir is available. Does not create anything — callers
+/// are expected to `create_dir_all` the parent before calling
+/// [`SessionStore::open`].
+#[must_use]
+pub fn default_db_path() -> PathBuf {
+    if let Some(dir) = dirs::data_local_dir() {
+        return dir.join("basilisk").join("sessions.db");
+    }
+    PathBuf::from(".basilisk-data").join("sessions.db")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

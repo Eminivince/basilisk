@@ -21,8 +21,8 @@ pub mod tools;
 
 pub use runner::{AgentError, AgentOutcome, AgentRunner, AgentStats, AgentStopReason, Budget};
 pub use session::{
-    LoadedSession, SessionError, SessionRecord, SessionStatus, SessionStore, SessionSummary,
-    ToolCallRecord, TurnRecord, TurnRole,
+    default_db_path, LoadedSession, SessionError, SessionRecord, SessionStatus, SessionStore,
+    SessionSummary, ToolCallRecord, TurnRecord, TurnRole,
 };
 pub use tool::{SessionId, Tool, ToolContext, ToolRegistry, ToolResult};
 pub use tools::{

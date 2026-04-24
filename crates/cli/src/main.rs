@@ -7,7 +7,7 @@ use basilisk_core::Config;
 use basilisk_logging::LogFormat;
 use clap::{Parser, Subcommand};
 
-use crate::commands::{cache::CacheArgs, recon::ReconArgs};
+use crate::commands::{agent::AgentArgs, cache::CacheArgs, recon::ReconArgs};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -34,6 +34,8 @@ enum Command {
     /// Classify a target (GitHub repo, on-chain address, local path) and, for
     /// on-chain targets, fetch bytecode + verified source + proxy info.
     Recon(ReconArgs),
+    /// Run the LLM-driven auditor agent against a target.
+    Agent(AgentArgs),
     /// Inspect and manage Basilisk's on-disk cache.
     Cache(CacheArgs),
 }
@@ -56,6 +58,7 @@ async fn main() -> Result<()> {
 
     match &cli.command {
         Command::Recon(args) => commands::recon::run(args, &config).await,
+        Command::Agent(args) => commands::agent::run(args, &config).await,
         Command::Cache(args) => commands::cache::run(args).await,
     }
 }

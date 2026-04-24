@@ -23,6 +23,7 @@ basilisk-rpc = { workspace = true }
 
 alloy-primitives = { workspace = true }
 async-trait = { workspace = true }
+dirs = { workspace = true }
 hex = { workspace = true }
 regex = { workspace = true }
 rusqlite = { workspace = true }

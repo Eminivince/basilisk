@@ -16,10 +16,12 @@ name = "audit"
 path = "src/main.rs"
 
 [dependencies]
+basilisk-agent = { workspace = true }
 basilisk-cache = { workspace = true }
 basilisk-core = { workspace = true }
 basilisk-git = { workspace = true }
 basilisk-github = { workspace = true }
+basilisk-llm = { workspace = true }
 basilisk-logging = { workspace = true }
 basilisk-onchain = { workspace = true }
 basilisk-project = { workspace = true }
