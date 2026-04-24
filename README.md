@@ -47,10 +47,12 @@ reachable via `RPC_URL_<CHAIN>` overrides.
 
 ## Roadmap
 
-- **Phase 3: the agent.** Wire an LLM (Claude by default, model-agnostic
-  backend) to the existing tool surface via a tool-use loop. The agent reads
-  resolved systems, forms vulnerability hypotheses, and produces findings
-  with attributed reasoning.
+- **Phase 3: the agent (in progress).** LLM-driven recon via
+  `audit recon <target> --agent` is wired end-to-end: model-agnostic
+  backend (Anthropic shipped), eleven tool definitions covering the
+  Phase 1–2 ingestion surface, SQLite-persisted sessions, streamed
+  CLI output, and budget enforcement. Vulnerability reasoning,
+  RAG-assisted grounding, and PoC synthesis land in later phases.
 - **Phase 4: knowledge base.** Retrieval-augmented grounding over audit
   corpora (Solodit, Code4rena, Sherlock, SWC registry) and per-engagement
   context (protocol docs, whitepapers). Every finding retrieves its
@@ -89,7 +91,7 @@ To install `audit` as a system binary: `cargo install --path crates/cli`.
 
 | Variable | What it enables | Without it |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Phase 3+ agent reasoning (not yet wired) | Phase 2 tool surface works without |
+| `ANTHROPIC_API_KEY` | LLM-driven recon via `audit recon <target> --agent` (Phase 3 in progress) | Deterministic recon still works without |
 | `ALCHEMY_API_KEY` | Primary RPC for supported chains | Falls back to `RPC_URL_<CHAIN>` or public RPC |
 | `ETHERSCAN_API_KEY` | Verified source, creation-tx lookup, multi-chain via Etherscan V2 | Falls back to Sourcify and Blockscout |
 | `GITHUB_TOKEN` | 5000/hour API rate limit, private-repo access, authenticated clones | 60/hour unauthenticated |
@@ -215,6 +217,82 @@ clone — same layout detector, same config parsers, same import graph.
 Points at any directory containing a `foundry.toml`, `hardhat.config.*`, or
 `truffle-config.js`.
 
+### Agent-driven recon (experimental)
+
+> **Phase 3 in progress.** The LLM-driven path is wired end-to-end but
+> the system prompt, tool descriptions, and budgets are still being
+> iterated on. Expect tool-use choices to shift between versions, and
+> set a sane `--max-cost` before leaving a session unattended.
+
+Passing `--agent` routes the target through an LLM tool-use loop
+instead of the deterministic pipeline. The agent calls the same
+eleven recon tools (`classify_target`, `resolve_onchain_system`,
+`fetch_github_repo`, `analyze_project`, `read_file`, `grep_project`,
+`list_directory`, `get_storage_slot`, `static_call`,
+`resolve_onchain_contract`, `finalize_report`) and produces a
+markdown brief in its own voice.
+
+```console
+$ audit recon 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 \
+    --agent \
+    --max-turns 20 \
+    --max-cost 100
+
+→ agent running  target="0xA0b86991...48"  model=anthropic/claude-opus-4-7  budget=Budget { ... }
+  session db: /Users/you/.basilisk/sessions.db
+── session 7a1c2f90-…-0b3e ──
+━━ turn 1 ━━
+I'll start by classifying this target.
+  ↳ calling classify_target
+  ↳ classify_target  ok  (4ms)
+━━ turn 2 ━━
+This is an on-chain address on Ethereum mainnet. Let me pull the system.
+  ↳ calling resolve_onchain_system
+  ↳ resolve_onchain_system  ok  (2340ms)
+━━ turn 3 ━━
+USDC is a proxy. I'll finalize the brief.
+  ↳ calling finalize_report
+  ↳ finalize_report  ok  (1ms)
+
+── agent session: COMPLETED ──
+stop_reason: report_finalized
+stats: 3 turns, 3 tool calls, 24500 tokens, ~37¢, 42000ms
+
+── final report (High) ──
+# USDC Recon Brief
+…
+```
+
+Every session is persisted to `~/.basilisk/sessions.db`. Inspect, resume,
+or delete via:
+
+```bash
+audit session list
+audit session show <id>
+audit session show <id> --report-only      # just the markdown
+audit session show <id> --format json      # machine-readable full transcript
+audit session resume <id>                  # continue an interrupted run
+audit session delete <id> --yes            # remove from the DB
+```
+
+**Budgets.** The agent will stop cleanly the moment any of the four
+caps trip (`--max-turns`, `--max-tokens`, `--max-cost`, `--agent-max-duration`).
+Defaults: 40 turns / 500k tokens / $5 / 20 min. The session row is
+marked `interrupted`; pick it up with `session resume`.
+
+**Prompt iteration.** The shipped system prompt lives at
+`crates/agent/src/prompts/recon_v1.md` and is embedded at build
+time. Point `--system-prompt <path>` at a working copy to iterate
+without a rebuild.
+
+**Live tests.** Three `#[ignore]`-d tests (`crates/agent/tests/agent_live.rs`)
+exercise the full path against real targets (`forge-template`, USDC,
+Aave V3 Pool). They cost real money — run explicitly:
+
+```bash
+cargo test -p basilisk-agent --test agent_live -- --ignored --nocapture
+```
+
 ## Architecture
 
 ```
@@ -229,6 +307,8 @@ crates/
 ├── github/      thin GitHub REST client (reqwest, rustls)
 ├── git/         shallow clone with persistent cache, ref resolution (git2)
 ├── project/     source project analysis — config parsing, enumeration, imports
+├── llm/         model-agnostic LlmBackend trait + Anthropic impl + SSE streaming
+├── agent/       tool definitions, tool-use loop, sessions (SQLite), prompts
 └── logging/     tracing setup
 ```
 
