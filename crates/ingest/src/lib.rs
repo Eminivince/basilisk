@@ -21,6 +21,7 @@ pub mod error;
 pub mod ingester;
 pub mod normalize;
 pub mod openzeppelin;
+pub mod protocol;
 pub mod solodit;
 pub mod state;
 pub mod swc;
@@ -31,6 +32,7 @@ pub use ingester::{
 };
 pub use normalize::{chunk_record, NormalizedRecord};
 pub use openzeppelin::{OzAdvisoriesIngester, OzAdvisoryRow};
+pub use protocol::{ProtocolIngester, ProtocolSource};
 pub use solodit::{SoloditFindingRow, SoloditIngester};
 pub use state::{default_state_path, IngestState, SourceState};
 pub use swc::{SwcEntry, SwcIngester};
