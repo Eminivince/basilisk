@@ -14,7 +14,7 @@ async fn openai_flavour_sends_bearer_and_parses_response() {
         .and(path("/v1/embeddings"))
         .and(header("authorization", "Bearer sk-x"))
         .and(body_partial_json(serde_json::json!({
-            "model": "text-embedding-3-large",
+            "model": "nvidia/llama-nemotron-embed-vl-1b-v2:free",
             "input": ["hello"],
             "encoding_format": "float"
         })))
@@ -30,7 +30,7 @@ async fn openai_flavour_sends_bearer_and_parses_response() {
         basilisk_embeddings::Provider::OpenAi,
         &server.uri(),
         "sk-x",
-        "text-embedding-3-large",
+        "nvidia/llama-nemotron-embed-vl-1b-v2:free",
         None,
         None,
     )
@@ -113,7 +113,7 @@ async fn rate_limit_propagates_retry_after() {
         basilisk_embeddings::Provider::OpenAi,
         &server.uri(),
         "sk-x",
-        "text-embedding-3-large",
+        "nvidia/llama-nemotron-embed-vl-1b-v2:free",
         None,
         None,
     )

@@ -214,6 +214,16 @@ impl Ingester for OzAdvisoriesIngester {
         let rows = fetch_advisories(&self.base, self.token.as_deref()).await?;
         report.records_scanned = rows.len();
 
+        // Early tick so the operator sees scanning finished.
+        if let Some(cb) = &options.progress {
+            cb(crate::ingester::IngestProgress {
+                records_scanned: report.records_scanned,
+                records_upserted: 0,
+                records_skipped: 0,
+                embedding_tokens_used: 0,
+            });
+        }
+
         let spec = schema::advisories(embeddings.identifier(), embeddings.dimensions());
         vector_store.create_collection(spec).await?;
 

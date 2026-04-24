@@ -161,8 +161,8 @@ mod tests {
 
     #[test]
     fn specs_carry_embedding_provider_identifier() {
-        let spec = public_findings("openai/text-embedding-3-large", 3072);
-        assert_eq!(spec.embedding_provider, "openai/text-embedding-3-large");
+        let spec = public_findings("openai/nvidia/llama-nemotron-embed-vl-1b-v2:free", 3072);
+        assert_eq!(spec.embedding_provider, "openai/nvidia/llama-nemotron-embed-vl-1b-v2:free");
         assert_eq!(spec.embedding_dim, 3072);
     }
 }

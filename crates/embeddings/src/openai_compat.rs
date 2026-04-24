@@ -41,6 +41,8 @@ use crate::{
 pub const OPENAI_BASE: &str = "https://api.openai.com";
 /// `Ollama`'s default local endpoint.
 pub const OLLAMA_BASE: &str = "http://localhost:11434";
+/// `OpenRouter`'s production endpoint.
+pub const OPENROUTER_BASE: &str = "https://openrouter.ai/api";
 
 /// `OpenAI`'s flagship retrieval model (3072-dim).
 pub const OPENAI_DEFAULT_MODEL: &str = "text-embedding-3-large";
@@ -55,6 +57,13 @@ const OLLAMA_DEFAULT_DIM: usize = 768;
 const OLLAMA_DEFAULT_MAX_TOKENS: usize = 8192;
 const OLLAMA_MAX_BATCH: usize = 512;
 
+/// `OpenRouter`: no single canonical default since the catalogue
+/// is huge. Operators supply a model via env; these are fallback
+/// conservative limits that work for most embedding models routed
+/// through `OpenRouter`.
+const OPENROUTER_DEFAULT_MAX_TOKENS: usize = 8191;
+const OPENROUTER_MAX_BATCH: usize = 64;
+
 /// Which flavour of the OpenAI-compatible wire we're talking to.
 /// Determines auth + default model + dimensions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +73,9 @@ pub enum Provider {
     /// Local Ollama (`http://localhost:11434` by default). Key
     /// optional; ignored if the operator has put a proxy in front.
     Ollama,
+    /// `OpenRouter` (`openrouter.ai/api`). Bearer key required.
+    /// Model + dimensions come from the operator; no default.
+    OpenRouter,
 }
 
 impl Provider {
@@ -71,34 +83,41 @@ impl Provider {
         match self {
             Self::OpenAi => OPENAI_BASE,
             Self::Ollama => OLLAMA_BASE,
+            Self::OpenRouter => OPENROUTER_BASE,
         }
     }
     fn default_dim(self) -> usize {
         match self {
             Self::OpenAi => OPENAI_DIM,
             Self::Ollama => OLLAMA_DEFAULT_DIM,
+            // No safe default — OpenRouter hosts many shapes.
+            // `with_full_config` callers must supply it.
+            Self::OpenRouter => 0,
         }
     }
     fn default_max_tokens(self) -> usize {
         match self {
             Self::OpenAi => OPENAI_MAX_TOKENS,
             Self::Ollama => OLLAMA_DEFAULT_MAX_TOKENS,
+            Self::OpenRouter => OPENROUTER_DEFAULT_MAX_TOKENS,
         }
     }
     fn default_max_batch(self) -> usize {
         match self {
             Self::OpenAi => OPENAI_MAX_BATCH,
             Self::Ollama => OLLAMA_MAX_BATCH,
+            Self::OpenRouter => OPENROUTER_MAX_BATCH,
         }
     }
     fn identifier_prefix(self) -> &'static str {
         match self {
             Self::OpenAi => "openai",
             Self::Ollama => "ollama",
+            Self::OpenRouter => "openrouter",
         }
     }
     fn requires_key(self) -> bool {
-        matches!(self, Self::OpenAi)
+        matches!(self, Self::OpenAi | Self::OpenRouter)
     }
 }
 
@@ -155,6 +174,28 @@ impl OpenAICompatibleEmbeddingBackend {
         let base = host.unwrap_or_else(|| OLLAMA_BASE.to_string());
         let model = model.unwrap_or_else(|| OLLAMA_DEFAULT_MODEL.to_string());
         Self::with_full_config(Provider::Ollama, &base, "", &model, None, None)
+    }
+
+    /// Construct an `OpenRouter` backend. `model` is the
+    /// `provider/model-name` string the user picked (e.g.
+    /// `nvidia/llama-nemotron-embed-vl-1b-v2:free`). `dimensions`
+    /// is required — `OpenRouter` hosts many models with many
+    /// shapes, and we can't guess; get it from the model card.
+    pub fn openrouter(
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+        dimensions: usize,
+    ) -> Result<Self, EmbeddingError> {
+        let key = api_key.into();
+        let model = model.into();
+        Self::with_full_config(
+            Provider::OpenRouter,
+            OPENROUTER_BASE,
+            &key,
+            &model,
+            Some(dimensions),
+            None,
+        )
     }
 
     /// Full-control constructor. `dimensions`/`max_tokens`/
@@ -417,6 +458,27 @@ mod tests {
     }
 
     #[test]
+    fn openrouter_identifier_preserves_full_model_path() {
+        let b = OpenAICompatibleEmbeddingBackend::openrouter(
+            "sk-or",
+            "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+            1024,
+        )
+        .unwrap();
+        assert_eq!(
+            b.identifier(),
+            "openrouter/nvidia/llama-nemotron-embed-vl-1b-v2:free",
+        );
+        assert_eq!(b.dimensions(), 1024);
+    }
+
+    #[test]
+    fn openrouter_rejects_empty_key() {
+        let err = OpenAICompatibleEmbeddingBackend::openrouter("", "whatever", 768).unwrap_err();
+        assert!(matches!(err, EmbeddingError::AuthError(_)));
+    }
+
+    #[test]
     fn dimensions_match_provider_defaults() {
         let openai = OpenAICompatibleEmbeddingBackend::openai("sk-x").unwrap();
         let ollama = OpenAICompatibleEmbeddingBackend::ollama(None, None).unwrap();
@@ -437,9 +499,9 @@ mod tests {
     #[test]
     fn request_body_includes_encoding_format_float() {
         let inputs = [EmbeddingInput::document("hi")];
-        let body = build_request_body("text-embedding-3-large", &inputs);
+        let body = build_request_body("nvidia/llama-nemotron-embed-vl-1b-v2:free", &inputs);
         assert_eq!(body["encoding_format"], "float");
-        assert_eq!(body["model"], "text-embedding-3-large");
+        assert_eq!(body["model"], "nvidia/llama-nemotron-embed-vl-1b-v2:free");
         assert_eq!(body["input"][0], "hi");
     }
 
@@ -491,7 +553,7 @@ mod tests {
             Provider::OpenAi,
             "http://0.0.0.0:1",
             "sk-x",
-            "text-embedding-3-large",
+            "nvidia/llama-nemotron-embed-vl-1b-v2:free",
             None,
             None,
         )

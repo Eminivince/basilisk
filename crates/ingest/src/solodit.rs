@@ -275,6 +275,7 @@ impl Ingester for SoloditIngester {
         schema::PUBLIC_FINDINGS
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn ingest(
         &self,
         vector_store: Arc<dyn VectorStore>,
@@ -318,6 +319,19 @@ impl Ingester for SoloditIngester {
             return Ok(report);
         }
         report.records_scanned = rows.len();
+
+        // Early progress tick — tells the operator that scanning
+        // finished and embedding is about to start. Without this,
+        // a slow first embedding call (e.g. cold Ollama model)
+        // looks frozen.
+        if let Some(cb) = &options.progress {
+            cb(crate::ingester::IngestProgress {
+                records_scanned: report.records_scanned,
+                records_upserted: 0,
+                records_skipped: report.records_skipped,
+                embedding_tokens_used: 0,
+            });
+        }
 
         // Ensure the target collection exists with matching
         // provider + dim. A dim mismatch here is the "operator

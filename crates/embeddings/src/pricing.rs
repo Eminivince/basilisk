@@ -92,8 +92,8 @@ fn lookup_direct(m: &str) -> Option<EmbeddingPricing> {
     }
 
     // OpenAI (source: openai.com/pricing, 2026-04-24).
-    // text-embedding-3-large: $0.13 / 1M tokens = 13 cents.
-    if m.starts_with("text-embedding-3-large") {
+    // nvidia/llama-nemotron-embed-vl-1b-v2:free: $0.13 / 1M tokens = 13 cents.
+    if m.starts_with("nvidia/llama-nemotron-embed-vl-1b-v2:free") {
         return Some(EmbeddingPricing { per_mtok_cents: 13 });
     }
     // text-embedding-3-small: $0.02 / 1M tokens = 2 cents.
@@ -136,7 +136,10 @@ mod tests {
 
     #[test]
     fn openai_embedding_3_large_resolves() {
-        assert_eq!(known("text-embedding-3-large").per_mtok_cents, 13);
+        assert_eq!(
+            known("nvidia/llama-nemotron-embed-vl-1b-v2:free").per_mtok_cents,
+            13
+        );
     }
 
     #[test]
@@ -147,8 +150,8 @@ mod tests {
     #[test]
     fn openai_alias_resolves_like_bare() {
         assert_eq!(
-            known("openai/text-embedding-3-large"),
-            known("text-embedding-3-large"),
+            known("openai/nvidia/llama-nemotron-embed-vl-1b-v2:free"),
+            known("nvidia/llama-nemotron-embed-vl-1b-v2:free"),
         );
     }
 

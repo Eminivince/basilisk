@@ -76,7 +76,7 @@ mod tests {
             name: "public_findings".into(),
             stored_provider: "voyage/voyage-code-3".into(),
             stored_dim: 1024,
-            requested_provider: "openai/text-embedding-3-large".into(),
+            requested_provider: "openai/nvidia/llama-nemotron-embed-vl-1b-v2:free".into(),
             requested_dim: 3072,
         };
         let s = err.to_string();

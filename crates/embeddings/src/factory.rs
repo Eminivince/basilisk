@@ -32,6 +32,7 @@ pub enum ProviderKind {
     Voyage,
     OpenAi,
     Ollama,
+    OpenRouter,
 }
 
 impl ProviderKind {
@@ -42,6 +43,7 @@ impl ProviderKind {
             "voyage" => Some(Self::Voyage),
             "openai" => Some(Self::OpenAi),
             "ollama" => Some(Self::Ollama),
+            "openrouter" => Some(Self::OpenRouter),
             _ => None,
         }
     }
@@ -52,10 +54,20 @@ impl ProviderKind {
 #[derive(Debug, Clone, Default)]
 pub struct ProviderSelection {
     /// Explicit provider choice. When `None`, resolution prefers
-    /// Voyage → `OpenAI` → Ollama based on available keys.
+    /// Voyage → `OpenAI` → `OpenRouter` → Ollama based on
+    /// available keys (`OpenRouter` needs both key + model +
+    /// dimensions, so it only auto-selects when all three are set).
     pub provider: Option<ProviderKind>,
     pub voyage_api_key: Option<String>,
     pub openai_api_key: Option<String>,
+    pub openrouter_api_key: Option<String>,
+    /// Model name for `OpenRouter` (required when `OpenRouter`
+    /// is selected). Example: `nvidia/llama-nemotron-embed-vl-1b-v2:free`.
+    pub openrouter_embeddings_model: Option<String>,
+    /// Vector dimensionality for the `OpenRouter` model. Required
+    /// because `OpenRouter` hosts too many models to have a safe
+    /// default; look up the value from the model card.
+    pub openrouter_embeddings_dim: Option<usize>,
     /// Override the Ollama endpoint. `None` → `http://localhost:11434`.
     pub ollama_host: Option<String>,
     /// Override the model. Provider-specific default otherwise.
@@ -77,6 +89,16 @@ impl ProviderSelection {
         }
         if self.openai_api_key.is_some() {
             return Ok(ProviderKind::OpenAi);
+        }
+        // Auto-select OpenRouter only if all three required
+        // pieces are configured; otherwise fall through to
+        // Ollama so the operator gets a helpful error at resolve
+        // time rather than a half-built client.
+        if self.openrouter_api_key.is_some()
+            && self.openrouter_embeddings_model.is_some()
+            && self.openrouter_embeddings_dim.is_some()
+        {
+            return Ok(ProviderKind::OpenRouter);
         }
         Ok(ProviderKind::Ollama)
     }
@@ -118,6 +140,35 @@ pub fn build_provider(
             selection.ollama_host.clone(),
             selection.model.clone(),
         )?),
+        ProviderKind::OpenRouter => {
+            let key = selection.openrouter_api_key.as_deref().ok_or_else(|| {
+                EmbeddingError::AuthError(
+                    "OPENROUTER_API_KEY is not set (embeddings provider resolved to openrouter)"
+                        .into(),
+                )
+            })?;
+            let model = selection
+                .openrouter_embeddings_model
+                .as_deref()
+                .or(selection.model.as_deref())
+                .ok_or_else(|| {
+                    EmbeddingError::BadInput(
+                        "OpenRouter embeddings require a model — set \
+                         OPENROUTER_EMBEDDINGS_MODEL (e.g. nvidia/llama-nemotron-embed-vl-1b-v2:free)"
+                            .into(),
+                    )
+                })?;
+            let dim = selection.openrouter_embeddings_dim.ok_or_else(|| {
+                EmbeddingError::BadInput(
+                    "OpenRouter embeddings require a vector dimension — set \
+                     OPENROUTER_EMBEDDINGS_DIM to the value from the model card"
+                        .into(),
+                )
+            })?;
+            Arc::new(OpenAICompatibleEmbeddingBackend::openrouter(
+                key, model, dim,
+            )?)
+        }
     };
 
     let mut wrapped = BatchingProvider::new(base);

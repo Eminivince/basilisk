@@ -37,9 +37,11 @@ pub struct Config {
     /// embeddings on Solidity retrieval.
     #[serde(default)]
     pub voyage_api_key: Option<String>,
-    /// Explicit embeddings provider: `voyage`, `openai`, or
-    /// `ollama`. When unset, resolution prefers Voyage if its key is
-    /// present, else `OpenAI` if its key is present, else `Ollama`.
+    /// Explicit embeddings provider: `voyage`, `openai`, `ollama`,
+    /// or `openrouter`. When unset, resolution prefers Voyage if
+    /// its key is present, else `OpenAI` if its key is present,
+    /// else `OpenRouter` if key+model+dim are all set, else
+    /// `Ollama`.
     #[serde(default)]
     pub embeddings_provider: Option<String>,
     /// Override for the Ollama endpoint used by embeddings (and
@@ -47,6 +49,16 @@ pub struct Config {
     /// `http://localhost:11434`.
     #[serde(default)]
     pub ollama_host: Option<String>,
+    /// Model name for `OpenRouter` embeddings (e.g.
+    /// `nvidia/llama-nemotron-embed-vl-1b-v2:free`). Required when
+    /// `embeddings_provider` resolves to `openrouter`.
+    #[serde(default)]
+    pub openrouter_embeddings_model: Option<String>,
+    /// Vector dimensionality for the `OpenRouter` embeddings
+    /// model. Required because `OpenRouter` hosts many models
+    /// with many shapes and we can't guess.
+    #[serde(default)]
+    pub openrouter_embeddings_dim: Option<usize>,
     #[serde(default)]
     pub etherscan_api_key: Option<String>,
     #[serde(default)]
@@ -77,6 +89,8 @@ impl Default for Config {
             voyage_api_key: None,
             embeddings_provider: None,
             ollama_host: None,
+            openrouter_embeddings_model: None,
+            openrouter_embeddings_dim: None,
             etherscan_api_key: None,
             alchemy_api_key: None,
             github_token: None,
@@ -123,6 +137,14 @@ impl Config {
             voyage_api_key: non_empty_env("VOYAGE_API_KEY"),
             embeddings_provider: non_empty_env("EMBEDDINGS_PROVIDER"),
             ollama_host: non_empty_env("OLLAMA_HOST"),
+            openrouter_embeddings_model: non_empty_env("OPENROUTER_EMBEDDINGS_MODEL"),
+            openrouter_embeddings_dim: match non_empty_env("OPENROUTER_EMBEDDINGS_DIM") {
+                Some(s) => Some(
+                    s.parse::<usize>()
+                        .map_err(|e| Error::Config(format!("OPENROUTER_EMBEDDINGS_DIM: {e}")))?,
+                ),
+                None => None,
+            },
             etherscan_api_key: non_empty_env("ETHERSCAN_API_KEY"),
             alchemy_api_key: non_empty_env("ALCHEMY_API_KEY"),
             github_token: non_empty_env("GITHUB_TOKEN"),

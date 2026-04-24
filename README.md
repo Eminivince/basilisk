@@ -89,19 +89,19 @@ To install `audit` as a system binary: `cargo install --path crates/cli`.
 
 ## Configuration
 
-| Variable | What it enables | Without it |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | Default LLM provider for `audit recon <target> --agent` | Pick another `--provider` or fall back to deterministic recon |
-| `OPENROUTER_API_KEY` | Agent routing via `--provider openrouter` (any Claude/GPT/Gemini/Llama model) | Use a different provider |
-| `OPENAI_API_KEY` | Agent routing via `--provider openai`; fallback key for `--provider openai-compat`; also used as an embedding provider | Use a different provider or supply `--llm-api-key-env` |
-| `VOYAGE_API_KEY` | Primary embedding provider for `audit knowledge` (voyage-code-3) | Falls back to OpenAI or local Ollama |
-| `OLLAMA_HOST` | Local Ollama endpoint for embeddings (`nomic-embed-text`, fully offline) | Defaults to `http://localhost:11434` |
-| `EMBEDDINGS_PROVIDER` | Explicit `voyage`\|`openai`\|`ollama` override | Picks the first configured provider |
-| `ALCHEMY_API_KEY` | Primary RPC for supported chains | Falls back to `RPC_URL_<CHAIN>` or public RPC |
-| `ETHERSCAN_API_KEY` | Verified source, creation-tx lookup, multi-chain via Etherscan V2 | Falls back to Sourcify and Blockscout |
-| `GITHUB_TOKEN` | 5000/hour API rate limit, private-repo access, authenticated clones | 60/hour unauthenticated |
-| `RPC_URL_<CHAIN>` | Override RPC for a specific chain (e.g. `RPC_URL_BNB=...`) | Uses Alchemy if supported, else public |
-| `LOG_LEVEL` | `error`, `warn`, `info`, `debug`, `trace`; accepts any `tracing` filter | Defaults to `info` |
+| Variable              | What it enables                                                                                                        | Without it                                                    |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `ANTHROPIC_API_KEY`   | Default LLM provider for `audit recon <target> --agent`                                                                | Pick another `--provider` or fall back to deterministic recon |
+| `OPENROUTER_API_KEY`  | Agent routing via `--provider openrouter` (any Claude/GPT/Gemini/Llama model)                                          | Use a different provider                                      |
+| `OPENAI_API_KEY`      | Agent routing via `--provider openai`; fallback key for `--provider openai-compat`; also used as an embedding provider | Use a different provider or supply `--llm-api-key-env`        |
+| `VOYAGE_API_KEY`      | Primary embedding provider for `audit knowledge` (voyage-code-3)                                                       | Falls back to OpenAI or local Ollama                          |
+| `OLLAMA_HOST`         | Local Ollama endpoint for embeddings (`nomic-embed-text`, fully offline)                                               | Defaults to `http://localhost:11434`                          |
+| `EMBEDDINGS_PROVIDER` | Explicit `voyage`\|`openai`\|`ollama` override                                                                         | Picks the first configured provider                           |
+| `ALCHEMY_API_KEY`     | Primary RPC for supported chains                                                                                       | Falls back to `RPC_URL_<CHAIN>` or public RPC                 |
+| `ETHERSCAN_API_KEY`   | Verified source, creation-tx lookup, multi-chain via Etherscan V2                                                      | Falls back to Sourcify and Blockscout                         |
+| `GITHUB_TOKEN`        | 5000/hour API rate limit, private-repo access, authenticated clones                                                    | 60/hour unauthenticated                                       |
+| `RPC_URL_<CHAIN>`     | Override RPC for a specific chain (e.g. `RPC_URL_BNB=...`)                                                             | Uses Alchemy if supported, else public                        |
+| `LOG_LEVEL`           | `error`, `warn`, `info`, `debug`, `trace`; accepts any `tracing` filter                                                | Defaults to `info`                                            |
 
 **Upgrade-history caveat.** Upgrade history requires an RPC provider that
 permits large `eth_getLogs` queries. Alchemy's free tier caps at 10-block
@@ -292,13 +292,13 @@ without a rebuild.
 
 **Choosing a provider.** `--provider` selects the LLM backend:
 
-| `--provider` | Endpoint | Key env var | Notes |
-|---|---|---|---|
-| `anthropic` *(default)* | `api.anthropic.com` | `ANTHROPIC_API_KEY` | Native Claude. |
-| `openrouter` | `openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | Any Claude / GPT / Gemini / Llama model OpenRouter proxies. |
-| `openai` | `api.openai.com/v1` | `OPENAI_API_KEY` | Native OpenAI. |
-| `ollama` | `http://localhost:11434/v1` | none | Local models (Llama, Qwen, DeepSeek, …). |
-| `openai-compat` | `--llm-base-url <url>` | `--llm-api-key-env <VAR>` (optional) | Any OpenAI-compatible server: `llama.cpp`, LM Studio, LocalAI, vLLM. |
+| `--provider`            | Endpoint                    | Key env var                          | Notes                                                                |
+| ----------------------- | --------------------------- | ------------------------------------ | -------------------------------------------------------------------- |
+| `anthropic` _(default)_ | `api.anthropic.com`         | `ANTHROPIC_API_KEY`                  | Native Claude.                                                       |
+| `openrouter`            | `openrouter.ai/api/v1`      | `OPENROUTER_API_KEY`                 | Any Claude / GPT / Gemini / Llama model OpenRouter proxies.          |
+| `openai`                | `api.openai.com/v1`         | `OPENAI_API_KEY`                     | Native OpenAI.                                                       |
+| `ollama`                | `http://localhost:11434/v1` | none                                 | Local models (Llama, Qwen, DeepSeek, …).                             |
+| `openai-compat`         | `--llm-base-url <url>`      | `--llm-api-key-env <VAR>` (optional) | Any OpenAI-compatible server: `llama.cpp`, LM Studio, LocalAI, vLLM. |
 
 Examples:
 
@@ -419,12 +419,12 @@ than scraping live. See the fixture shape in
 
 **Embedding providers** (configure via env or `.env`):
 
-| Variable | What it enables | Without it |
-|---|---|---|
-| `VOYAGE_API_KEY` | Primary embedding provider (`voyage-code-3`, 1024 dims) | Falls back to OpenAI or Ollama |
-| `OPENAI_API_KEY` | `text-embedding-3-large` (3072 dims) — also used for the LLM | Falls back to Ollama if present |
-| `OLLAMA_HOST` | Local Ollama endpoint (`nomic-embed-text`, 768 dims) — fully offline | Defaults to `http://localhost:11434` |
-| `EMBEDDINGS_PROVIDER` | Explicit `voyage`\|`openai`\|`ollama` override | Picks the first configured provider |
+| Variable              | What it enables                                                                 | Without it                           |
+| --------------------- | ------------------------------------------------------------------------------- | ------------------------------------ |
+| `VOYAGE_API_KEY`      | Primary embedding provider (`voyage-code-3`, 1024 dims)                         | Falls back to OpenAI or Ollama       |
+| `OPENAI_API_KEY`      | `nvidia/llama-nemotron-embed-vl-1b-v2:free` (3072 dims) — also used for the LLM | Falls back to Ollama if present      |
+| `OLLAMA_HOST`         | Local Ollama endpoint (`nomic-embed-text`, 768 dims) — fully offline            | Defaults to `http://localhost:11434` |
+| `EMBEDDINGS_PROVIDER` | Explicit `voyage`\|`openai`\|`ollama` override                                  | Picks the first configured provider  |
 
 Changing providers changes the vector dimension. Each collection carries
 a `schema_version` + `embedding_dim` in its metadata; mismatched writes

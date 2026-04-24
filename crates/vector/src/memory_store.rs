@@ -349,7 +349,10 @@ mod tests {
             .await
             .unwrap();
         let err = store
-            .create_collection(schema::user_findings("openai/text-embedding-3-large", 3072))
+            .create_collection(schema::user_findings(
+                "openai/nvidia/llama-nemotron-embed-vl-1b-v2:free",
+                3072,
+            ))
             .await
             .unwrap_err();
         assert!(matches!(err, VectorError::IncompatibleSpec { .. }));

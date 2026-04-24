@@ -193,6 +193,19 @@ impl Ingester for SwcIngester {
             }
         }
 
+        // Fire an early progress event so the operator sees
+        // "scanning done, embedding about to start" instead of a
+        // frozen-looking line during what may be a slow first call
+        // (e.g. Ollama loading a cold model).
+        if let Some(cb) = &options.progress {
+            cb(crate::ingester::IngestProgress {
+                records_scanned: report.records_scanned,
+                records_upserted: 0,
+                records_skipped: 0,
+                embedding_tokens_used: 0,
+            });
+        }
+
         let spec = schema::advisories(embeddings.identifier(), embeddings.dimensions());
         vector_store.create_collection(spec).await?;
 
