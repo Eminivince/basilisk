@@ -320,16 +320,15 @@ impl AgentRunner {
     ) -> Result<AgentOutcome, AgentError> {
         let context = self.build_context(session_id.clone());
         let mut final_report: Option<FinalReport> = None;
-        // One-shot nudge: if the model ends a turn with text and no
-        // tool call, we inject a user message reminding it to call
-        // `finalize_report` AND flip `tool_choice` to `Any` on the
-        // next request — that's a provider-level constraint, so the
-        // model cannot text-end again. If it *still* errors out (e.g.
-        // invalid tool input), we surrender. The soft prompt nudge
-        // plus the hard tool_choice constraint together close the
-        // gap that pure prompt mitigation could not (see live runs
-        // #4 and #5 against USDC / Aave V3).
-        let mut nudged_for_missing_tool_call = false;
+        // Consecutive-text-end guard. When the model text-ends, we
+        // inject a nudge user message and flip `tool_choice` to `Any`
+        // on the next request — a provider-level constraint, so the
+        // model physically cannot text-end again. Two text-ends IN A
+        // ROW (nudge didn't fix it) surrenders to avoid budget waste.
+        // A successful tool call breaks the streak and resets the
+        // counter, so a later text-end gets its own nudge chance.
+        // Budget caps are the ultimate bound on runaway sessions.
+        let mut consecutive_text_ends: u32 = 0;
         let mut force_tool_choice: Option<ToolChoice> = None;
         let stop_reason: AgentStopReason = loop {
             if let Some(reason) = self.budget_check_at(&stats, started_inst) {
@@ -463,20 +462,20 @@ impl AgentRunner {
             }
 
             // No tool calls means the model ended its turn with text
-            // only. Send one nudge reminding it to call a tool (usually
-            // `finalize_report`); if the next turn STILL text-ends,
-            // we give up. Prevents the classic "model writes the brief
-            // as prose and stops" failure mode observed across live
-            // runs while capping recovery cost at one extra turn.
+            // only. Send a nudge + force `tool_choice=Any` on the
+            // next turn. If this text-end is the SECOND in a row
+            // (nudge didn't help), surrender — a third attempt would
+            // just burn more budget on the same failure. A successful
+            // tool call between text-ends resets the counter.
             if tool_results.is_empty() {
-                if nudged_for_missing_tool_call {
+                consecutive_text_ends = consecutive_text_ends.saturating_add(1);
+                if consecutive_text_ends >= 2 {
                     break AgentStopReason::LlmError {
                         message: "model ended turn without calling a tool or finalize_report \
                                   (even after a nudge — giving up to avoid budget waste)"
                             .into(),
                     };
                 }
-                nudged_for_missing_tool_call = true;
                 // Hard rails: force the model to emit a tool call on
                 // the next turn. `Any` lets it pick between
                 // `finalize_report` and another investigation tool —
@@ -505,6 +504,11 @@ impl AgentRunner {
                 });
                 continue;
             }
+
+            // Successful tool dispatch breaks any text-end streak —
+            // the model is making progress, so a later text-end gets
+            // its own fresh nudge chance.
+            consecutive_text_ends = 0;
 
             let tr_at = SystemTime::now();
             self.store.record_turn(

@@ -442,6 +442,58 @@ async fn two_consecutive_text_only_turns_give_up_after_nudge() {
 }
 
 #[tokio::test]
+async fn recover_then_text_end_again_gets_a_fresh_nudge() {
+    // Regression for a live-run bug: the nudge flag was session-wide,
+    // so a session that recovered from one text-end and later hit a
+    // SECOND (non-consecutive) text-end surrendered instead of
+    // nudging again. The invariant is "consecutive text-ends," not
+    // "has ever nudged."
+    //
+    // Sequence: echo (ok) → text (nudge 1, Any) → echo (recovers,
+    // streak reset) → text (nudge 2, Any) → finalize.
+    let backend = Arc::new(MockLlmBackend::new("claude-opus-4-7"));
+    backend.push(
+        MockResponse::new()
+            .tool_use("tu_1", EchoTool::NAME, serde_json::json!({"a": 1}))
+            .build(),
+    );
+    backend.push(MockResponse::new().text("I'm thinking...").build()); // text-end #1
+    backend.push(
+        MockResponse::new()
+            .tool_use("tu_2", EchoTool::NAME, serde_json::json!({"a": 2}))
+            .build(),
+    ); // forced recovery
+    backend.push(MockResponse::new().text("Still thinking...").build()); // text-end #2
+    backend.push(
+        MockResponse::new()
+            .finalize("tu_f", "# done", Confidence::Medium, None)
+            .build(),
+    );
+
+    let (runner, _dir) = make_runner(backend.clone(), Budget::default());
+    let outcome = runner.run("eth/0x", "go", None).await.unwrap();
+
+    assert_eq!(
+        outcome.stop_reason,
+        AgentStopReason::ReportFinalized,
+        "session should finalize despite two non-consecutive text-ends",
+    );
+
+    // Two forced-tool-choice turns in this sequence. Both must carry
+    // `Any` — proof that the nudge was re-armed after recovery.
+    let choices = backend.tool_choices();
+    let any_turns: Vec<_> = choices
+        .iter()
+        .filter(|c| matches!(c, basilisk_llm::ToolChoice::Any))
+        .collect();
+    assert_eq!(
+        any_turns.len(),
+        2,
+        "expected two nudge turns forcing Any, got choices={choices:?}",
+    );
+}
+
+#[tokio::test]
 async fn text_only_turn_followed_by_tool_call_recovers_via_nudge() {
     // Model text-ends on turn 1, receives the nudge, and recovers by
     // calling finalize_report on turn 2. Exercises the recovery path
