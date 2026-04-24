@@ -15,6 +15,7 @@
 
 pub mod runner;
 pub mod session;
+pub mod testing;
 pub mod tool;
 pub mod tools;
 

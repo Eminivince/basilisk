@@ -96,6 +96,13 @@ impl AgentRunner {
         self.registry.len()
     }
 
+    /// The session store this runner persists into. Exposed so the CLI
+    /// (`CP6`) and integration tests can read back transcripts without
+    /// threading the `Arc` in separately.
+    pub fn store(&self) -> &Arc<SessionStore> {
+        &self.store
+    }
+
     /// Build the [`ToolContext`] for one in-flight session. Called by
     /// the loop (`CP5c`); exposed `pub(crate)` so tests can drive it.
     pub(crate) fn build_context(&self, session_id: SessionId) -> ToolContext {
@@ -436,18 +443,16 @@ impl std::fmt::Debug for AgentRunner {
 #[cfg(test)]
 #[allow(clippy::match_wildcard_for_single_variants)]
 mod tests {
-    use std::collections::VecDeque;
-    use std::sync::Mutex;
-
     use async_trait::async_trait;
-    use basilisk_llm::{CompletionResponse, CompletionStream, LlmError, StopReason};
+    use basilisk_llm::{CompletionStream, LlmError};
 
     use super::*;
     use crate::session::SessionStore;
     use crate::tools::standard_registry;
 
-    /// Fixed-identifier backend that never produces a stream — enough
-    /// for budget + cost-helper tests where `run` is never called.
+    /// Minimal backend that only answers `identifier` — enough to
+    /// exercise the budget + cost helpers. End-to-end loop behaviour
+    /// is covered by the integration tests that drive `MockLlmBackend`.
     struct StubBackend {
         id: String,
     }
@@ -465,77 +470,8 @@ mod tests {
         }
     }
 
-    /// Backend that hands out canned responses in FIFO order. Overrides
-    /// `complete` directly so we don't have to fabricate a stream of
-    /// `StreamEvent`s. The richer mock lands in `CP5d`.
-    struct ScriptedBackend {
-        id: String,
-        queue: Mutex<VecDeque<Result<CompletionResponse, LlmError>>>,
-    }
-
-    impl ScriptedBackend {
-        fn new(id: &str, items: Vec<Result<CompletionResponse, LlmError>>) -> Self {
-            Self {
-                id: id.into(),
-                queue: Mutex::new(items.into()),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl LlmBackend for ScriptedBackend {
-        fn identifier(&self) -> &str {
-            &self.id
-        }
-
-        async fn complete(
-            &self,
-            _request: basilisk_llm::CompletionRequest,
-        ) -> Result<CompletionResponse, LlmError> {
-            self.queue
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or_else(|| Err(LlmError::Other("scripted backend exhausted".into())))
-        }
-
-        async fn stream(
-            &self,
-            _request: basilisk_llm::CompletionRequest,
-        ) -> Result<CompletionStream, LlmError> {
-            Err(LlmError::Other(
-                "scripted backend does not stream; call complete()".into(),
-            ))
-        }
-    }
-
-    fn finalize_response() -> CompletionResponse {
-        CompletionResponse {
-            content: vec![ContentBlock::ToolUse {
-                id: "tu_1".into(),
-                name: FINALIZE_REPORT_NAME.into(),
-                input: serde_json::json!({
-                    "markdown": "# brief\nthe target is a token contract.",
-                    "confidence": "medium",
-                    "notes": "double-check the upgrade key",
-                }),
-            }],
-            stop_reason: StopReason::ToolUse,
-            usage: TokenUsage {
-                input_tokens: 100,
-                output_tokens: 50,
-                cache_read_input_tokens: None,
-                cache_creation_input_tokens: None,
-            },
-            model: "claude-opus-4-7".into(),
-        }
-    }
-
     fn build_runner(model: &str, budget: Budget) -> AgentRunner {
-        build_runner_with_backend(Arc::new(StubBackend { id: model.into() }), budget)
-    }
-
-    fn build_runner_with_backend(backend: Arc<dyn LlmBackend>, budget: Budget) -> AgentRunner {
+        let backend: Arc<dyn LlmBackend> = Arc::new(StubBackend { id: model.into() });
         let registry = standard_registry();
         let store = Arc::new(SessionStore::open_in_memory().unwrap());
         let config = Arc::new(Config::default());
@@ -699,141 +635,7 @@ mod tests {
         );
     }
 
-    // --- CP5c: `run` happy-path tests ------------------------------------
-
-    #[tokio::test]
-    async fn run_finalizes_immediately_when_first_tool_call_is_finalize_report() {
-        let backend = Arc::new(ScriptedBackend::new(
-            "claude-opus-4-7",
-            vec![Ok(finalize_response())],
-        ));
-        let runner = build_runner_with_backend(backend, Budget::default());
-
-        let outcome = runner
-            .run("eth/0xdead", "audit this token", Some("from test".into()))
-            .await
-            .expect("run succeeds");
-
-        assert_eq!(outcome.stop_reason, AgentStopReason::ReportFinalized);
-        assert_eq!(outcome.stats.turns, 1);
-        assert_eq!(outcome.stats.tool_calls, 1);
-        assert_eq!(outcome.stats.usage.input_tokens, 100);
-        assert_eq!(outcome.stats.usage.output_tokens, 50);
-        assert!(outcome.stats.cost_cents > 0, "opus pricing should apply");
-
-        let report = outcome.final_report.as_ref().expect("final report set");
-        assert_eq!(report.confidence, Confidence::Medium);
-        assert!(report.markdown.contains("brief"));
-        assert_eq!(
-            report.notes.as_deref(),
-            Some("double-check the upgrade key")
-        );
-
-        // Persistence: session is `completed`; transcript captures the
-        // initial user turn + the assistant turn + the finalize call.
-        let snap = runner.store.load_session(&outcome.session_id).unwrap();
-        assert_eq!(snap.session.status, SessionStatus::Completed);
-        assert_eq!(
-            snap.session.stop_reason.as_deref(),
-            Some("report_finalized")
-        );
-        assert_eq!(snap.session.target, "eth/0xdead");
-        // CP4c collapses `note` + `final_report_notes` into one field.
-        let note = snap.session.note.as_deref().expect("note set");
-        assert!(note.contains("from test"));
-        assert!(note.contains("double-check the upgrade key"));
-        assert_eq!(snap.session.final_confidence.as_deref(), Some("medium"));
-        assert!(snap
-            .session
-            .final_report_markdown
-            .as_deref()
-            .unwrap()
-            .contains("brief"));
-        assert_eq!(snap.turns.len(), 2);
-        assert_eq!(snap.turns[0].role, TurnRole::User);
-        assert_eq!(snap.turns[1].role, TurnRole::Assistant);
-        assert_eq!(snap.tool_calls.len(), 1);
-        assert_eq!(snap.tool_calls[0].tool_name, "finalize_report");
-        assert!(!snap.tool_calls[0].is_error);
-    }
-
-    #[tokio::test]
-    async fn run_returns_immediately_when_turn_budget_is_zero() {
-        let backend = Arc::new(ScriptedBackend::new("claude-opus-4-7", vec![]));
-        let runner = build_runner_with_backend(
-            backend,
-            Budget {
-                max_turns: 0,
-                ..Budget::default()
-            },
-        );
-
-        let outcome = runner.run("eth/0x", "go", None).await.unwrap();
-        assert_eq!(outcome.stop_reason, AgentStopReason::TurnLimitReached);
-        assert_eq!(outcome.stats.turns, 0);
-        assert!(outcome.final_report.is_none());
-
-        let snap = runner.store.load_session(&outcome.session_id).unwrap();
-        assert_eq!(snap.session.status, SessionStatus::Failed);
-        assert_eq!(
-            snap.session.stop_reason.as_deref(),
-            Some("turn_limit_reached")
-        );
-        // Only the seeded user turn was recorded.
-        assert_eq!(snap.turns.len(), 1);
-        assert_eq!(snap.tool_calls.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn run_records_llm_error_when_backend_fails() {
-        let backend = Arc::new(ScriptedBackend::new(
-            "claude-opus-4-7",
-            vec![Err(LlmError::Other("kaboom".into()))],
-        ));
-        let runner = build_runner_with_backend(backend, Budget::default());
-
-        let outcome = runner.run("eth/0x", "go", None).await.unwrap();
-        match outcome.stop_reason {
-            AgentStopReason::LlmError { ref message } => {
-                assert!(message.contains("kaboom"), "got {message:?}");
-            }
-            other => panic!("expected LlmError, got {other:?}"),
-        }
-        assert_eq!(outcome.stats.turns, 0);
-        assert!(outcome.final_report.is_none());
-
-        let snap = runner.store.load_session(&outcome.session_id).unwrap();
-        assert_eq!(snap.session.status, SessionStatus::Failed);
-        assert_eq!(snap.session.stop_reason.as_deref(), Some("llm_error"));
-    }
-
-    #[tokio::test]
-    async fn run_stops_when_model_ends_turn_without_calling_a_tool() {
-        let response = CompletionResponse {
-            content: vec![ContentBlock::text("I'm done thinking.")],
-            stop_reason: StopReason::EndTurn,
-            usage: TokenUsage {
-                input_tokens: 50,
-                output_tokens: 5,
-                cache_read_input_tokens: None,
-                cache_creation_input_tokens: None,
-            },
-            model: "claude-opus-4-7".into(),
-        };
-        let backend = Arc::new(ScriptedBackend::new("claude-opus-4-7", vec![Ok(response)]));
-        let runner = build_runner_with_backend(backend, Budget::default());
-
-        let outcome = runner.run("eth/0x", "go", None).await.unwrap();
-        match outcome.stop_reason {
-            AgentStopReason::LlmError { ref message } => {
-                assert!(
-                    message.contains("without calling a tool"),
-                    "got {message:?}"
-                );
-            }
-            other => panic!("expected LlmError, got {other:?}"),
-        }
-        assert_eq!(outcome.stats.turns, 1);
-        assert_eq!(outcome.stats.tool_calls, 0);
-    }
+    // End-to-end loop behaviour lives in `tests/agent_loop.rs`, which
+    // drives `MockLlmBackend` from the public `testing` module so the
+    // same scaffold is reusable by downstream crates (CLI, e2e harness).
 }
