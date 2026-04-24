@@ -987,9 +987,12 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "basilisk-embeddings",
+ "basilisk-git",
  "basilisk-vector",
  "dirs",
  "hex",
+ "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
