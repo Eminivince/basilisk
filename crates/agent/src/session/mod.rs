@@ -20,5 +20,6 @@ pub mod types;
 pub use error::SessionError;
 pub use store::{SessionStore, SCHEMA_VERSION};
 pub use types::{
-    SessionRecord, SessionStatus, SessionSummary, ToolCallRecord, TurnRecord, TurnRole,
+    LoadedSession, SessionRecord, SessionStatus, SessionSummary, ToolCallRecord, TurnRecord,
+    TurnRole,
 };

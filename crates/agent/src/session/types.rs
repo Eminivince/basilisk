@@ -150,6 +150,16 @@ pub struct SessionSummary {
     pub final_confidence: Option<String>,
 }
 
+/// Full snapshot `load_session` hands back: the session row itself
+/// plus every turn and tool call in write order. Everything the CLI's
+/// `audit session show` subcommand needs to reconstruct a transcript.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoadedSession {
+    pub session: SessionRecord,
+    pub turns: Vec<TurnRecord>,
+    pub tool_calls: Vec<ToolCallRecord>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

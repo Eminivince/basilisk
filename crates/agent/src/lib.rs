@@ -18,8 +18,8 @@ pub mod tool;
 pub mod tools;
 
 pub use session::{
-    SessionError, SessionRecord, SessionStatus, SessionStore, SessionSummary, ToolCallRecord,
-    TurnRecord, TurnRole,
+    LoadedSession, SessionError, SessionRecord, SessionStatus, SessionStore, SessionSummary,
+    ToolCallRecord, TurnRecord, TurnRole,
 };
 pub use tool::{SessionId, Tool, ToolContext, ToolRegistry, ToolResult};
 pub use tools::{

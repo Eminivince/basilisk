@@ -330,7 +330,280 @@ impl SessionStore {
         }
         Ok(())
     }
+
+    // --- read + maintenance path (set-6 `CP4c`) --------------------------
+
+    /// Reconstruct a full session transcript: the [`SessionRecord`]
+    /// itself, every turn in write order, and every tool call keyed by
+    /// its `(turn_index, call_index)` position.
+    ///
+    /// Returns [`SessionError::NotFound`] when no row matches.
+    pub fn load_session(&self, session_id: &SessionId) -> Result<LoadedSession, SessionError> {
+        let conn = self.lock()?;
+
+        let session = conn
+            .query_row(
+                "SELECT id, created_at_ms, updated_at_ms, target, model,
+                        system_prompt_hash, status, stop_reason,
+                        final_report_markdown, final_confidence,
+                        final_report_notes, note, stats_json
+                 FROM sessions WHERE id = ?",
+                params![session_id.as_str()],
+                row_to_session,
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    SessionError::NotFound(session_id.as_str().to_string())
+                }
+                other => SessionError::from(other),
+            })??;
+
+        let turns: Vec<TurnRecord> = {
+            let mut stmt = conn.prepare(
+                "SELECT session_id, turn_index, role, content_json, tokens_in, tokens_out,
+                        started_at_ms, ended_at_ms
+                 FROM turns WHERE session_id = ? ORDER BY turn_index",
+            )?;
+            let iter = stmt.query_map(params![session_id.as_str()], row_to_turn)?;
+            let mut out = Vec::new();
+            for row in iter {
+                out.push(row??);
+            }
+            out
+        };
+
+        let tool_calls: Vec<ToolCallRecord> = {
+            let mut stmt = conn.prepare(
+                "SELECT session_id, turn_index, call_index, tool_use_id, tool_name,
+                        input_json, output_json, is_error, duration_ms
+                 FROM tool_calls WHERE session_id = ?
+                 ORDER BY turn_index, call_index",
+            )?;
+            let iter = stmt.query_map(params![session_id.as_str()], row_to_tool_call)?;
+            let mut out = Vec::new();
+            for row in iter {
+                out.push(row??);
+            }
+            out
+        };
+
+        Ok(LoadedSession {
+            session,
+            turns,
+            tool_calls,
+        })
+    }
+
+    /// Most-recent-first session listing. `limit` defaults to 50 when
+    /// omitted; `status` filters by lifecycle stage when supplied.
+    /// Returns the summary projection — no stats blob, no final report
+    /// markdown — because the CLI's `audit session list` doesn't need
+    /// those.
+    pub fn list_sessions(
+        &self,
+        limit: Option<u32>,
+        status: Option<SessionStatus>,
+    ) -> Result<Vec<SessionSummary>, SessionError> {
+        let limit = i64::from(limit.unwrap_or(50));
+        let conn = self.lock()?;
+
+        let (sql, status_tag): (&str, Option<&'static str>) = match status {
+            Some(s) => (
+                "SELECT id, created_at_ms, target, model, status, final_confidence
+                 FROM sessions WHERE status = ?
+                 ORDER BY created_at_ms DESC LIMIT ?",
+                Some(s.as_str()),
+            ),
+            None => (
+                "SELECT id, created_at_ms, target, model, status, final_confidence
+                 FROM sessions ORDER BY created_at_ms DESC LIMIT ?",
+                None,
+            ),
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+        let iter = if let Some(tag) = status_tag {
+            stmt.query_map(params![tag, limit], row_to_summary)?
+                .collect::<Vec<_>>()
+        } else {
+            stmt.query_map(params![limit], row_to_summary)?
+                .collect::<Vec<_>>()
+        };
+
+        let mut out = Vec::with_capacity(iter.len());
+        for row in iter {
+            out.push(row??);
+        }
+        Ok(out)
+    }
+
+    /// Remove a session and every row (turns, tool calls) that
+    /// references it. Foreign-key CASCADE makes this a single DELETE.
+    /// Returns [`SessionError::NotFound`] when the row didn't exist.
+    pub fn delete_session(&self, session_id: &SessionId) -> Result<(), SessionError> {
+        let conn = self.lock()?;
+        let rows = conn.execute(
+            "DELETE FROM sessions WHERE id = ?",
+            params![session_id.as_str()],
+        )?;
+        if rows == 0 {
+            return Err(SessionError::NotFound(session_id.as_str().to_string()));
+        }
+        Ok(())
+    }
+
+    /// Sweep every session still tagged `running` into `interrupted`.
+    /// Called once at startup so a previous crash doesn't leave stale
+    /// rows claiming to be live. Returns the number of rows touched.
+    pub fn mark_running_as_interrupted(
+        &self,
+        reason: impl Into<String>,
+    ) -> Result<usize, SessionError> {
+        let conn = self.lock()?;
+        let rows = conn.execute(
+            "UPDATE sessions
+             SET status = ?, stop_reason = ?, updated_at_ms = ?
+             WHERE status = ?",
+            params![
+                SessionStatus::Interrupted.as_str(),
+                reason.into(),
+                to_millis(SystemTime::now()),
+                SessionStatus::Running.as_str(),
+            ],
+        )?;
+        Ok(rows)
+    }
 }
+
+// --- row decoders ------------------------------------------------------
+//
+// Shared by the read-path methods. Each one takes a `rusqlite::Row` —
+// column order follows the SELECT statement in the caller — and
+// returns `Result<Record, SessionError>`. The outer
+// `Result<Result<…, SessionError>, rusqlite::Error>` pattern from
+// `query_row` / `query_map` forces a `.??` unwrap at the call site.
+
+fn row_to_session(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<Result<SessionRecord, SessionError>> {
+    let status_s: String = row.get(6)?;
+    let Some(status) = SessionStatus::parse(&status_s) else {
+        return Ok(Err(SessionError::InvalidEnum {
+            column: "status",
+            value: status_s,
+        }));
+    };
+    let stats_s: String = row.get(12)?;
+    let stats = match serde_json::from_str::<serde_json::Value>(&stats_s) {
+        Ok(v) => v,
+        Err(e) => return Ok(Err(SessionError::Json(e))),
+    };
+    Ok(Ok(SessionRecord {
+        id: row.get(0)?,
+        created_at: crate::session::time_serde::from_millis(row.get(1)?),
+        updated_at: crate::session::time_serde::from_millis(row.get(2)?),
+        target: row.get(3)?,
+        model: row.get(4)?,
+        system_prompt_hash: row.get(5)?,
+        status,
+        stop_reason: row.get(7)?,
+        final_report_markdown: row.get(8)?,
+        final_confidence: row.get(9)?,
+        // final_report_notes (index 10) lives on `SessionRecord` as
+        // part of the `note` field's semantic pair — kept separate in
+        // the DB but collapsed here for the CP4 surface. CP5/CP7 can
+        // split it out if a reason emerges.
+        note: match row.get::<_, Option<String>>(11)? {
+            Some(n) => Some(match row.get::<_, Option<String>>(10)? {
+                Some(report_notes) => format!("{n}\n---\n{report_notes}"),
+                None => n,
+            }),
+            None => row.get::<_, Option<String>>(10)?,
+        },
+        stats,
+    }))
+}
+
+fn row_to_turn(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<TurnRecord, SessionError>> {
+    let role_s: String = row.get(2)?;
+    let Some(role) = TurnRole::parse(&role_s) else {
+        return Ok(Err(SessionError::InvalidEnum {
+            column: "role",
+            value: role_s,
+        }));
+    };
+    let content_s: String = row.get(3)?;
+    let content = match serde_json::from_str::<serde_json::Value>(&content_s) {
+        Ok(v) => v,
+        Err(e) => return Ok(Err(SessionError::Json(e))),
+    };
+    Ok(Ok(TurnRecord {
+        session_id: row.get(0)?,
+        turn_index: row.get(1)?,
+        role,
+        content,
+        tokens_in: row.get(4)?,
+        tokens_out: row.get(5)?,
+        started_at: crate::session::time_serde::from_millis(row.get(6)?),
+        ended_at: crate::session::time_serde::from_millis(row.get(7)?),
+    }))
+}
+
+fn row_to_tool_call(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<Result<ToolCallRecord, SessionError>> {
+    let input_s: String = row.get(5)?;
+    let input = match serde_json::from_str::<serde_json::Value>(&input_s) {
+        Ok(v) => v,
+        Err(e) => return Ok(Err(SessionError::Json(e))),
+    };
+    let output: Option<String> = row.get(6)?;
+    let output = match output {
+        Some(s) => match serde_json::from_str::<serde_json::Value>(&s) {
+            Ok(v) => Some(v),
+            Err(e) => return Ok(Err(SessionError::Json(e))),
+        },
+        None => None,
+    };
+    let is_error: i64 = row.get(7)?;
+    let duration_ms: i64 = row.get(8)?;
+    Ok(Ok(ToolCallRecord {
+        session_id: row.get(0)?,
+        turn_index: row.get(1)?,
+        call_index: row.get(2)?,
+        tool_use_id: row.get(3)?,
+        tool_name: row.get(4)?,
+        input,
+        output,
+        is_error: is_error != 0,
+        duration_ms: u64::try_from(duration_ms).unwrap_or(0),
+    }))
+}
+
+fn row_to_summary(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<Result<SessionSummary, SessionError>> {
+    let status_s: String = row.get(4)?;
+    let Some(status) = SessionStatus::parse(&status_s) else {
+        return Ok(Err(SessionError::InvalidEnum {
+            column: "status",
+            value: status_s,
+        }));
+    };
+    Ok(Ok(SessionSummary {
+        id: row.get(0)?,
+        created_at: crate::session::time_serde::from_millis(row.get(1)?),
+        target: row.get(2)?,
+        model: row.get(3)?,
+        status,
+        final_confidence: row.get(5)?,
+    }))
+}
+
+// Bring types into scope for the decoders.
+use crate::session::types::{
+    LoadedSession, SessionRecord, SessionSummary, ToolCallRecord, TurnRecord,
+};
 
 impl std::fmt::Debug for SessionStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -848,5 +1121,276 @@ mod tests {
         assert_eq!(call_count, 1);
         assert_eq!(t0, 0);
         assert_eq!(t1, 1);
+    }
+
+    // --- read + maintenance (`CP4c`) tests -------------------------------
+
+    #[test]
+    fn load_session_round_trips_full_lifecycle() {
+        let store = fresh();
+        let id = store
+            .create_session("./proj", "m", "sha256:1", Some("user-note".into()))
+            .unwrap();
+        let now = SystemTime::now();
+        store
+            .record_turn(
+                &id,
+                TurnRole::User,
+                &serde_json::json!([{"type": "text", "text": "go"}]),
+                None,
+                None,
+                now,
+                now,
+            )
+            .unwrap();
+        store
+            .record_turn(
+                &id,
+                TurnRole::Assistant,
+                &serde_json::json!([{"type": "text", "text": "done"}]),
+                Some(40),
+                Some(20),
+                now,
+                now,
+            )
+            .unwrap();
+        store
+            .record_tool_call(
+                &id,
+                1,
+                0,
+                "tu_a",
+                "classify_target",
+                &serde_json::json!({ "input": "./proj" }),
+                Some(&serde_json::json!({ "LocalPath": true })),
+                false,
+                42,
+            )
+            .unwrap();
+        store
+            .record_final_report(&id, "# Report", "high", Some("agent-notes".into()))
+            .unwrap();
+        store
+            .mark_stopped(
+                &id,
+                "report_finalized",
+                SessionStatus::Completed,
+                &serde_json::json!({ "turns": 2 }),
+            )
+            .unwrap();
+
+        let loaded = store.load_session(&id).unwrap();
+        assert_eq!(loaded.session.id, id.as_str());
+        assert_eq!(loaded.session.status, SessionStatus::Completed);
+        assert_eq!(
+            loaded.session.stop_reason.as_deref(),
+            Some("report_finalized")
+        );
+        assert_eq!(loaded.session.target, "./proj");
+        assert_eq!(loaded.session.final_confidence.as_deref(), Some("high"));
+        assert!(loaded
+            .session
+            .final_report_markdown
+            .as_deref()
+            .unwrap()
+            .contains("Report"));
+        // Session note collapses with finalize notes in CP4c's flat read.
+        let note = loaded.session.note.as_deref().unwrap();
+        assert!(note.contains("user-note"));
+        assert!(note.contains("agent-notes"));
+        assert_eq!(loaded.turns.len(), 2);
+        assert_eq!(loaded.turns[0].role, TurnRole::User);
+        assert_eq!(loaded.turns[1].role, TurnRole::Assistant);
+        assert_eq!(loaded.turns[1].tokens_in, Some(40));
+        assert_eq!(loaded.tool_calls.len(), 1);
+        assert_eq!(loaded.tool_calls[0].tool_name, "classify_target");
+        assert!(!loaded.tool_calls[0].is_error);
+        assert_eq!(loaded.tool_calls[0].duration_ms, 42);
+    }
+
+    #[test]
+    fn load_session_reports_not_found_for_missing_id() {
+        let store = fresh();
+        let err = store.load_session(&SessionId::new("ghost")).unwrap_err();
+        assert!(matches!(err, SessionError::NotFound(_)));
+    }
+
+    #[test]
+    fn list_sessions_orders_newest_first() {
+        let store = fresh();
+        let older = store.create_session("a", "m", "h", None).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        let newer = store.create_session("b", "m", "h", None).unwrap();
+
+        let list = store.list_sessions(None, None).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id, newer.as_str());
+        assert_eq!(list[1].id, older.as_str());
+    }
+
+    #[test]
+    fn list_sessions_respects_limit() {
+        let store = fresh();
+        for i in 0..5 {
+            store
+                .create_session(format!("t{i}"), "m", "h", None)
+                .unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let list = store.list_sessions(Some(2), None).unwrap();
+        assert_eq!(list.len(), 2);
+    }
+
+    #[test]
+    fn list_sessions_filters_by_status() {
+        let store = fresh();
+        let a = store.create_session("t1", "m", "h", None).unwrap();
+        let b = store.create_session("t2", "m", "h", None).unwrap();
+        store
+            .mark_stopped(
+                &a,
+                "report_finalized",
+                SessionStatus::Completed,
+                &serde_json::json!({}),
+            )
+            .unwrap();
+
+        let completed = store
+            .list_sessions(None, Some(SessionStatus::Completed))
+            .unwrap();
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].id, a.as_str());
+
+        let running = store
+            .list_sessions(None, Some(SessionStatus::Running))
+            .unwrap();
+        assert_eq!(running.len(), 1);
+        assert_eq!(running[0].id, b.as_str());
+    }
+
+    #[test]
+    fn delete_session_cascades_to_turns_and_tool_calls() {
+        let store = fresh();
+        let id = insert_session(&store);
+        let now = SystemTime::now();
+        store
+            .record_turn(
+                &id,
+                TurnRole::User,
+                &serde_json::json!([]),
+                None,
+                None,
+                now,
+                now,
+            )
+            .unwrap();
+        store
+            .record_tool_call(
+                &id,
+                0,
+                0,
+                "tu",
+                "classify_target",
+                &serde_json::json!({}),
+                None,
+                false,
+                1,
+            )
+            .unwrap();
+
+        store.delete_session(&id).unwrap();
+
+        let conn = store.lock().unwrap();
+        let session_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = ?",
+                params![id.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let turn_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM turns WHERE session_id = ?",
+                params![id.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let call_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tool_calls WHERE session_id = ?",
+                params![id.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(session_count, 0);
+        assert_eq!(turn_count, 0);
+        assert_eq!(call_count, 0);
+    }
+
+    #[test]
+    fn delete_session_reports_not_found_when_missing() {
+        let store = fresh();
+        let err = store.delete_session(&SessionId::new("nope")).unwrap_err();
+        assert!(matches!(err, SessionError::NotFound(_)));
+    }
+
+    #[test]
+    fn mark_running_as_interrupted_sweeps_stale_rows() {
+        let store = fresh();
+        // Two running, one already completed.
+        let a = store.create_session("t1", "m", "h", None).unwrap();
+        let b = store.create_session("t2", "m", "h", None).unwrap();
+        let done = store.create_session("t3", "m", "h", None).unwrap();
+        store
+            .mark_stopped(
+                &done,
+                "report_finalized",
+                SessionStatus::Completed,
+                &serde_json::json!({}),
+            )
+            .unwrap();
+
+        let touched = store
+            .mark_running_as_interrupted("process_crashed")
+            .unwrap();
+        assert_eq!(touched, 2);
+
+        // a + b now interrupted; `done` untouched.
+        let loaded_a = store.load_session(&a).unwrap();
+        let loaded_b = store.load_session(&b).unwrap();
+        let loaded_done = store.load_session(&done).unwrap();
+        assert_eq!(loaded_a.session.status, SessionStatus::Interrupted);
+        assert_eq!(
+            loaded_a.session.stop_reason.as_deref(),
+            Some("process_crashed")
+        );
+        assert_eq!(loaded_b.session.status, SessionStatus::Interrupted);
+        assert_eq!(loaded_done.session.status, SessionStatus::Completed);
+    }
+
+    #[test]
+    fn mark_running_as_interrupted_is_a_noop_when_nothing_running() {
+        let store = fresh();
+        let touched = store
+            .mark_running_as_interrupted("process_crashed")
+            .unwrap();
+        assert_eq!(touched, 0);
+    }
+
+    #[test]
+    fn load_session_returns_turns_in_index_order_even_if_inserted_out_of_order() {
+        let store = fresh();
+        let id = insert_session(&store);
+        let now = SystemTime::now();
+        // Sequential API guarantees 0, 1, 2 — exercise that read order
+        // matches regardless.
+        for role in [TurnRole::User, TurnRole::Assistant, TurnRole::User] {
+            store
+                .record_turn(&id, role, &serde_json::json!([]), None, None, now, now)
+                .unwrap();
+        }
+        let loaded = store.load_session(&id).unwrap();
+        let indices: Vec<u32> = loaded.turns.iter().map(|t| t.turn_index).collect();
+        assert_eq!(indices, vec![0, 1, 2]);
     }
 }
