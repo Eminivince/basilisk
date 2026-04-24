@@ -7,7 +7,7 @@
 
 use async_trait::async_trait;
 
-use crate::{error::EmbeddingError, types::EmbeddingInput, types::Embedding};
+use crate::{error::EmbeddingError, types::Embedding, types::EmbeddingInput};
 
 /// A model-agnostic embedding backend.
 ///

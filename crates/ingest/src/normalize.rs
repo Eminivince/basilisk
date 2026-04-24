@@ -228,11 +228,7 @@ mod tests {
         assert!(chunks[0].text.contains("Reentrancy"));
         assert!(chunks[0].text.contains("short body"));
         // total_chunks==1 → no linkage keys added.
-        assert!(chunks[0]
-            .metadata
-            .extra
-            .get("chunk_index")
-            .is_none());
+        assert!(chunks[0].metadata.extra.get("chunk_index").is_none());
     }
 
     #[test]
@@ -248,11 +244,17 @@ mod tests {
         let total = chunks.len();
         for (idx, c) in chunks.iter().enumerate() {
             assert_eq!(
-                c.metadata.extra.get("chunk_index").and_then(serde_json::Value::as_u64),
+                c.metadata
+                    .extra
+                    .get("chunk_index")
+                    .and_then(serde_json::Value::as_u64),
                 Some(idx as u64),
             );
             assert_eq!(
-                c.metadata.extra.get("total_chunks").and_then(serde_json::Value::as_u64),
+                c.metadata
+                    .extra
+                    .get("total_chunks")
+                    .and_then(serde_json::Value::as_u64),
                 Some(total as u64),
             );
             assert!(c.metadata.extra.get("parent_id").is_some());
@@ -310,7 +312,10 @@ mod tests {
         assert_eq!(md.source_id, "sol-42");
         assert_eq!(md.kind, "finding");
         assert_eq!(md.tags, vec!["severity:high"]);
-        assert_eq!(md.extra.get("auditor"), Some(&serde_json::json!("Trail of Bits")));
+        assert_eq!(
+            md.extra.get("auditor"),
+            Some(&serde_json::json!("Trail of Bits"))
+        );
     }
 
     #[test]
@@ -327,7 +332,7 @@ mod tests {
         // chosen so the splitter HAS to cut mid-paragraph.
         let body = "a🦀".repeat(200); // 5 bytes each * 200 = 1000 bytes
         let chunks = chunk_record(&sample_record(body), 50); // cap 200 bytes
-        // Must not panic; all chunks are valid UTF-8 by construction.
+                                                             // Must not panic; all chunks are valid UTF-8 by construction.
         assert!(!chunks.is_empty());
     }
 }

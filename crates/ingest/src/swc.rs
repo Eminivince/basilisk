@@ -60,8 +60,8 @@ pub struct SwcEntry {
 #[must_use]
 pub fn parse_swc_entry(number: &str, content: &str) -> SwcEntry {
     let (front, body) = split_front_matter(content);
-    let name = extract_field(front.as_deref().unwrap_or(""), "name")
-        .unwrap_or_else(|| number.to_string());
+    let name =
+        extract_field(front.as_deref().unwrap_or(""), "name").unwrap_or_else(|| number.to_string());
     SwcEntry {
         number: number.to_string(),
         name,
@@ -197,9 +197,7 @@ impl Ingester for SwcIngester {
             let content = match std::fs::read_to_string(path) {
                 Ok(c) => c,
                 Err(e) => {
-                    report
-                        .errors
-                        .push((number.clone(), format!("read: {e}")));
+                    report.errors.push((number.clone(), format!("read: {e}")));
                     continue;
                 }
             };
@@ -225,8 +223,10 @@ impl Ingester for SwcIngester {
                     batch.len(),
                 )));
             }
-            report.embedding_tokens_used +=
-                vectors.iter().map(|v| u64::from(v.input_tokens)).sum::<u64>();
+            report.embedding_tokens_used += vectors
+                .iter()
+                .map(|v| u64::from(v.input_tokens))
+                .sum::<u64>();
 
             let records: Vec<_> = batch
                 .iter()
@@ -247,10 +247,8 @@ impl Ingester for SwcIngester {
             self.source_name(),
             SourceState {
                 cursor: Some(fetched.commit_sha.clone()),
-                records_ingested: u64::try_from(
-                    report.records_new + report.records_updated,
-                )
-                .unwrap_or(u64::MAX),
+                records_ingested: u64::try_from(report.records_new + report.records_updated)
+                    .unwrap_or(u64::MAX),
                 last_run_unix: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .ok()
@@ -387,8 +385,8 @@ function foo() public { }
 
     #[test]
     fn collect_swc_files_missing_dir_errors_cleanly() {
-        let err = collect_swc_files(std::path::Path::new("/tmp/nonexistent-path-basilisk"))
-            .unwrap_err();
+        let err =
+            collect_swc_files(std::path::Path::new("/tmp/nonexistent-path-basilisk")).unwrap_err();
         assert!(matches!(err, IngestError::Source(_)));
     }
 }

@@ -62,8 +62,7 @@ async fn ollama_flavour_omits_authorization_header() {
         .mount(&server)
         .await;
 
-    let backend =
-        OpenAICompatibleEmbeddingBackend::ollama(Some(server.uri()), None).unwrap();
+    let backend = OpenAICompatibleEmbeddingBackend::ollama(Some(server.uri()), None).unwrap();
     // The mock above is the ONLY responder. Since the backend omits
     // the authorization header, it won't match, so wiremock returns
     // 404 and our backend classifies that as BadInput (HTTP 4xx).
@@ -87,8 +86,7 @@ async fn ollama_succeeds_when_server_accepts_no_auth() {
         .mount(&server)
         .await;
 
-    let backend =
-        OpenAICompatibleEmbeddingBackend::ollama(Some(server.uri()), None).unwrap();
+    let backend = OpenAICompatibleEmbeddingBackend::ollama(Some(server.uri()), None).unwrap();
     let out = backend
         .embed(&[EmbeddingInput::document("hi")])
         .await

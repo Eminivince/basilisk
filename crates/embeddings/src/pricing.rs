@@ -32,9 +32,7 @@ impl EmbeddingPricing {
     /// Explicit zero pricing for local providers. Known, not unknown.
     #[must_use]
     pub const fn free() -> Self {
-        Self {
-            per_mtok_cents: 0,
-        }
+        Self { per_mtok_cents: 0 }
     }
 }
 
@@ -82,35 +80,25 @@ fn lookup_direct(m: &str) -> Option<EmbeddingPricing> {
     // Voyage (source: docs.voyageai.com/docs/pricing, 2026-04-24).
     // voyage-code-3: $0.18 / 1M tokens = 18 cents.
     if m.starts_with("voyage-code-3") {
-        return Some(EmbeddingPricing {
-            per_mtok_cents: 18,
-        });
+        return Some(EmbeddingPricing { per_mtok_cents: 18 });
     }
     // voyage-3-large: $0.18 / 1M tokens.
     if m.starts_with("voyage-3-large") {
-        return Some(EmbeddingPricing {
-            per_mtok_cents: 18,
-        });
+        return Some(EmbeddingPricing { per_mtok_cents: 18 });
     }
     // voyage-3: $0.06 / 1M tokens.
     if m.starts_with("voyage-3") {
-        return Some(EmbeddingPricing {
-            per_mtok_cents: 6,
-        });
+        return Some(EmbeddingPricing { per_mtok_cents: 6 });
     }
 
     // OpenAI (source: openai.com/pricing, 2026-04-24).
     // text-embedding-3-large: $0.13 / 1M tokens = 13 cents.
     if m.starts_with("text-embedding-3-large") {
-        return Some(EmbeddingPricing {
-            per_mtok_cents: 13,
-        });
+        return Some(EmbeddingPricing { per_mtok_cents: 13 });
     }
     // text-embedding-3-small: $0.02 / 1M tokens = 2 cents.
     if m.starts_with("text-embedding-3-small") {
-        return Some(EmbeddingPricing {
-            per_mtok_cents: 2,
-        });
+        return Some(EmbeddingPricing { per_mtok_cents: 2 });
     }
 
     // Local providers: explicit free().
@@ -153,10 +141,7 @@ mod tests {
 
     #[test]
     fn voyage_alias_resolves_like_bare() {
-        assert_eq!(
-            known("voyage/voyage-code-3"),
-            known("voyage-code-3"),
-        );
+        assert_eq!(known("voyage/voyage-code-3"), known("voyage-code-3"),);
     }
 
     #[test]
@@ -182,18 +167,14 @@ mod tests {
 
     #[test]
     fn cost_cents_ceiling_rounds_tiny_usage_up() {
-        let p = EmbeddingPricing {
-            per_mtok_cents: 18,
-        };
+        let p = EmbeddingPricing { per_mtok_cents: 18 };
         // 1 token at 18¢/M → 0.000018¢ → ceil to 1.
         assert_eq!(p.cost_cents(1), 1);
     }
 
     #[test]
     fn cost_cents_handles_large_token_counts() {
-        let p = EmbeddingPricing {
-            per_mtok_cents: 18,
-        };
+        let p = EmbeddingPricing { per_mtok_cents: 18 };
         // 10M tokens at 18¢/M = 180¢.
         assert_eq!(p.cost_cents(10_000_000), 180);
     }

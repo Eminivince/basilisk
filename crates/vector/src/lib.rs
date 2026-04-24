@@ -19,12 +19,14 @@
 //! layout pattern established in earlier sets.
 
 pub mod error;
+pub mod file_store;
 pub mod memory_store;
 pub mod schema;
 pub mod store;
 pub mod types;
 
 pub use error::VectorError;
+pub use file_store::FileVectorStore;
 pub use memory_store::MemoryVectorStore;
 pub use store::VectorStore;
 pub use types::{

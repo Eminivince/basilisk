@@ -164,8 +164,10 @@ impl Ingester for ProtocolIngester {
                 .map(|c| EmbeddingInput::document(&c.text))
                 .collect();
             let vectors = embeddings.embed(&inputs).await?;
-            report.embedding_tokens_used +=
-                vectors.iter().map(|v| u64::from(v.input_tokens)).sum::<u64>();
+            report.embedding_tokens_used += vectors
+                .iter()
+                .map(|v| u64::from(v.input_tokens))
+                .sum::<u64>();
 
             let mut records = Vec::with_capacity(batch.len());
             for (chunk, embedding) in batch.iter().zip(vectors) {
@@ -199,10 +201,8 @@ impl Ingester for ProtocolIngester {
             format!("protocol:{}", self.engagement_id),
             crate::state::SourceState {
                 cursor: Some(descriptor.clone()),
-                records_ingested: u64::try_from(
-                    report.records_new + report.records_updated,
-                )
-                .unwrap_or(u64::MAX),
+                records_ingested: u64::try_from(report.records_new + report.records_updated)
+                    .unwrap_or(u64::MAX),
                 last_run_unix: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .ok()
@@ -225,7 +225,10 @@ impl ProtocolIngester {
                 owner,
                 repo,
                 subdir,
-            } => self.chunks_from_github(owner, repo, subdir.as_deref()).await,
+            } => {
+                self.chunks_from_github(owner, repo, subdir.as_deref())
+                    .await
+            }
         }
     }
 
@@ -247,8 +250,9 @@ impl ProtocolIngester {
             .await
             .map_err(|e| IngestError::Source(format!("reading {url}: {e}")))?;
 
-        let parsed_url =
-            url.parse().map_err(|e: url::ParseError| IngestError::Parse(e.to_string()))?;
+        let parsed_url = url
+            .parse()
+            .map_err(|e: url::ParseError| IngestError::Parse(e.to_string()))?;
         let product = readability::extractor::extract(&mut body.as_bytes(), &parsed_url)
             .map_err(|e| IngestError::Parse(format!("readability: {e}")))?;
         let text = if product.text.trim().is_empty() {
@@ -363,17 +367,10 @@ impl ProtocolIngester {
             // (engagement, file).
             let file_desc = format!(
                 "github:{owner}/{repo}:{}",
-                entry
-                    .strip_prefix(&walk_root)
-                    .unwrap_or(&entry)
-                    .display(),
+                entry.strip_prefix(&walk_root).unwrap_or(&entry).display(),
             );
-            let chunks = markdown_sections(
-                &self.engagement_id,
-                &file_desc,
-                &text,
-                CHUNK_TOKEN_TARGET,
-            );
+            let chunks =
+                markdown_sections(&self.engagement_id, &file_desc, &text, CHUNK_TOKEN_TARGET);
             out.extend(chunks);
         }
         Ok(out)
@@ -602,7 +599,10 @@ mod tests {
         assert!(chunks.len() >= 3, "got {}", chunks.len());
         // Ids are monotonic and deterministic.
         let ids: Vec<_> = chunks.iter().map(|c| c.id.clone()).collect();
-        assert_eq!(ids.iter().collect::<std::collections::BTreeSet<_>>().len(), chunks.len());
+        assert_eq!(
+            ids.iter().collect::<std::collections::BTreeSet<_>>().len(),
+            chunks.len()
+        );
     }
 
     #[test]
@@ -691,11 +691,7 @@ mod tests {
             "# Intro\nHello world\n\n## Details\nMore words here\n\n## Refs\nA link\n",
         )
         .unwrap();
-        let ing = ProtocolIngester::new(
-            "eng-1",
-            ProtocolSource::File(path.clone()),
-            None,
-        );
+        let ing = ProtocolIngester::new("eng-1", ProtocolSource::File(path.clone()), None);
         let chunks = ing.chunks_from_file(&path).unwrap();
         assert!(chunks.len() >= 3);
     }
@@ -705,8 +701,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("notes.txt");
         std::fs::write(&path, "a".repeat(10_000)).unwrap();
-        let ing =
-            ProtocolIngester::new("eng-1", ProtocolSource::File(path.clone()), None);
+        let ing = ProtocolIngester::new("eng-1", ProtocolSource::File(path.clone()), None);
         let chunks = ing.chunks_from_file(&path).unwrap();
         assert!(chunks.len() >= 2);
     }
@@ -714,8 +709,7 @@ mod tests {
     #[test]
     fn chunks_from_file_missing_path_is_source_error() {
         let path = std::path::PathBuf::from("/tmp/missing-protocol-file.md");
-        let ing =
-            ProtocolIngester::new("eng-1", ProtocolSource::File(path.clone()), None);
+        let ing = ProtocolIngester::new("eng-1", ProtocolSource::File(path.clone()), None);
         let err = ing.chunks_from_file(&path).unwrap_err();
         assert!(matches!(err, IngestError::Source(_)));
     }

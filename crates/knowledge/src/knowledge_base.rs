@@ -8,9 +8,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use basilisk_embeddings::{EmbeddingInput, EmbeddingProvider};
-use basilisk_vector::{
-    schema, Filter, Metadata, Record, SearchQuery, VectorStore,
-};
+use basilisk_vector::{schema, Filter, Metadata, Record, SearchQuery, VectorStore};
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -29,10 +27,7 @@ pub struct KnowledgeBase {
 }
 
 impl KnowledgeBase {
-    pub fn new(
-        vector: Arc<dyn VectorStore>,
-        embeddings: Arc<dyn EmbeddingProvider>,
-    ) -> Self {
+    pub fn new(vector: Arc<dyn VectorStore>, embeddings: Arc<dyn EmbeddingProvider>) -> Self {
         Self { vector, embeddings }
     }
 
@@ -50,8 +45,7 @@ impl KnowledgeBase {
     /// [`basilisk_vector::VectorError::IncompatibleSpec`] rather
     /// than silent corruption.
     pub async fn ensure_collections(&self) -> Result<(), KnowledgeError> {
-        let specs =
-            schema::all_specs(self.embeddings.identifier(), self.embeddings.dimensions());
+        let specs = schema::all_specs(self.embeddings.identifier(), self.embeddings.dimensions());
         for spec in specs {
             self.vector.create_collection(spec).await?;
         }
@@ -136,7 +130,10 @@ impl KnowledgeBase {
             "session_id".into(),
             serde_json::Value::String(session_id.to_string()),
         );
-        extra.insert("target".into(), serde_json::Value::String(target.to_string()));
+        extra.insert(
+            "target".into(),
+            serde_json::Value::String(target.to_string()),
+        );
         extra.insert(
             "severity".into(),
             serde_json::Value::String(finding.severity.clone()),
@@ -145,12 +142,12 @@ impl KnowledgeBase {
             "category".into(),
             serde_json::Value::String(finding.category.clone()),
         );
-        extra.insert(
-            "is_correction".into(),
-            serde_json::Value::Bool(false),
-        );
+        extra.insert("is_correction".into(), serde_json::Value::Bool(false));
         if let Some(code) = &finding.vulnerable_code {
-            extra.insert("vulnerable_code".into(), serde_json::Value::String(code.clone()));
+            extra.insert(
+                "vulnerable_code".into(),
+                serde_json::Value::String(code.clone()),
+            );
         }
         if let Some(loc) = &finding.location {
             extra.insert("location".into(), serde_json::to_value(loc)?);
@@ -355,10 +352,7 @@ impl KnowledgeBase {
     }
 
     /// Fetch a finding by id. Returns `None` if it doesn't exist.
-    pub async fn get_finding(
-        &self,
-        id: &FindingId,
-    ) -> Result<Option<Record>, KnowledgeError> {
+    pub async fn get_finding(&self, id: &FindingId) -> Result<Option<Record>, KnowledgeError> {
         Ok(self.vector.get(schema::USER_FINDINGS, id.as_str()).await?)
     }
 
@@ -422,8 +416,7 @@ impl KnowledgeBase {
                 if is_correction && !filters.include_corrections {
                     continue;
                 }
-                let corrections =
-                    self.collect_corrections_for(collection, &hit.id).await?;
+                let corrections = self.collect_corrections_for(collection, &hit.id).await?;
                 out.push(RetrievedChunk {
                     id: hit.id,
                     text: hit.text,
@@ -438,7 +431,11 @@ impl KnowledgeBase {
 
         // Merge across collections: sort by score descending,
         // apply the overall limit.
-        out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        out.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         out.truncate(limit);
         Ok(out)
     }
@@ -501,10 +498,8 @@ impl KnowledgeBase {
     }
 
     async fn ensure_user_findings_collection(&self) -> Result<(), KnowledgeError> {
-        let spec = schema::user_findings(
-            self.embeddings.identifier(),
-            self.embeddings.dimensions(),
-        );
+        let spec =
+            schema::user_findings(self.embeddings.identifier(), self.embeddings.dimensions());
         self.vector.create_collection(spec).await?;
         Ok(())
     }
@@ -577,10 +572,7 @@ mod tests {
         fn max_batch_size(&self) -> usize {
             32
         }
-        async fn embed(
-            &self,
-            inputs: &[EmbeddingInput],
-        ) -> Result<Vec<Embedding>, EmbeddingError> {
+        async fn embed(&self, inputs: &[EmbeddingInput]) -> Result<Vec<Embedding>, EmbeddingError> {
             Ok(inputs
                 .iter()
                 .map(|i| {
@@ -695,9 +687,7 @@ mod tests {
             .find(|h| h.id == id.0)
             .expect("original finding in results");
         assert_eq!(original.corrections.len(), 1);
-        assert!(original.corrections[0]
-            .reason
-            .contains("false positive"));
+        assert!(original.corrections[0].reason.contains("false positive"));
     }
 
     #[tokio::test]
@@ -724,8 +714,12 @@ mod tests {
             .record_finding("session-1", "eth/0xdead", sample_finding())
             .await
             .unwrap();
-        kb.record_verdict(&id, UserVerdict::Confirmed).await.unwrap();
-        kb.record_verdict(&id, UserVerdict::Confirmed).await.unwrap(); // idempotent
+        kb.record_verdict(&id, UserVerdict::Confirmed)
+            .await
+            .unwrap();
+        kb.record_verdict(&id, UserVerdict::Confirmed)
+            .await
+            .unwrap(); // idempotent
 
         // Search with corrections included should return both the
         // finding and its confirmed verdict.
@@ -735,10 +729,7 @@ mod tests {
             ..Default::default()
         };
         let hits = kb.search("reentrancy", filters, 10).await.unwrap();
-        let confirm_rows: Vec<_> = hits
-            .iter()
-            .filter(|h| h.kind == "correction")
-            .collect();
+        let confirm_rows: Vec<_> = hits.iter().filter(|h| h.kind == "correction").collect();
         assert_eq!(
             confirm_rows.len(),
             1,
@@ -750,7 +741,10 @@ mod tests {
     #[tokio::test]
     async fn search_empty_query_errors_rather_than_wasting_an_embed_call() {
         let kb = kb();
-        let err = kb.search("   ", SearchFilters::default(), 5).await.unwrap_err();
+        let err = kb
+            .search("   ", SearchFilters::default(), 5)
+            .await
+            .unwrap_err();
         assert!(matches!(err, KnowledgeError::BadInput(_)));
     }
 
@@ -768,7 +762,9 @@ mod tests {
     async fn search_scopes_to_requested_collections() {
         let kb = kb();
         kb.ensure_collections().await.unwrap();
-        kb.record_finding("s1", "t", sample_finding()).await.unwrap();
+        kb.record_finding("s1", "t", sample_finding())
+            .await
+            .unwrap();
         // Restrict to advisories — should skip user_findings and
         // return empty.
         let filters = SearchFilters {
@@ -783,7 +779,10 @@ mod tests {
     #[tokio::test]
     async fn include_corrections_false_drops_correction_rows() {
         let kb = kb();
-        let id = kb.record_finding("s1", "t", sample_finding()).await.unwrap();
+        let id = kb
+            .record_finding("s1", "t", sample_finding())
+            .await
+            .unwrap();
         kb.record_correction(
             &id,
             Correction {
@@ -817,7 +816,9 @@ mod tests {
     async fn stats_reports_provider_and_per_collection_counts() {
         let kb = kb();
         kb.ensure_collections().await.unwrap();
-        kb.record_finding("s1", "t", sample_finding()).await.unwrap();
+        kb.record_finding("s1", "t", sample_finding())
+            .await
+            .unwrap();
         let s = kb.stats().await.unwrap();
         assert_eq!(s.embedding_provider, "mock/deterministic");
         assert_eq!(s.embedding_dim, 8);

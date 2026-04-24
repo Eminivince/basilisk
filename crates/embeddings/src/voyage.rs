@@ -113,9 +113,7 @@ impl VoyageBackend {
         let key = api_key.into();
         let trimmed = key.trim().to_string();
         if trimmed.is_empty() {
-            return Err(EmbeddingError::AuthError(
-                "VOYAGE_API_KEY is empty".into(),
-            ));
+            return Err(EmbeddingError::AuthError("VOYAGE_API_KEY is empty".into()));
         }
         let client = Client::builder()
             // Connect fast; be patient on the response side since
@@ -197,7 +195,10 @@ impl EmbeddingProvider for VoyageBackend {
             .inner
             .client
             .post(&url)
-            .header("authorization", format!("Bearer {}", self.inner.api_key.as_str()))
+            .header(
+                "authorization",
+                format!("Bearer {}", self.inner.api_key.as_str()),
+            )
             .header("content-type", "application/json")
             .json(&body)
             .send()
@@ -316,7 +317,10 @@ fn classify_reqwest_error(e: reqwest::Error) -> EmbeddingError {
     }
 }
 
-async fn map_http_error(status: reqwest::StatusCode, response: reqwest::Response) -> EmbeddingError {
+async fn map_http_error(
+    status: reqwest::StatusCode,
+    response: reqwest::Response,
+) -> EmbeddingError {
     let retry_after = response
         .headers()
         .get("retry-after")
@@ -408,10 +412,7 @@ mod tests {
 
     #[test]
     fn dominant_kind_defaults_to_document_on_tie() {
-        let inputs = [
-            EmbeddingInput::query("q1"),
-            EmbeddingInput::document("d1"),
-        ];
+        let inputs = [EmbeddingInput::query("q1"), EmbeddingInput::document("d1")];
         // Tie → document (the ingest default, matching Voyage's
         // less-specialised projection).
         assert_eq!(dominant_kind(&inputs), "document");
@@ -472,14 +473,17 @@ mod tests {
             }],
             usage: WireUsage::default(),
         };
-        assert!(matches!(parse_response(wire, 2), Err(EmbeddingError::ParseError(_))));
+        assert!(matches!(
+            parse_response(wire, 2),
+            Err(EmbeddingError::ParseError(_))
+        ));
     }
 
     #[tokio::test]
     async fn embed_empty_returns_empty_without_network() {
         // An empty batch should short-circuit before the HTTP layer.
-        let b = VoyageBackend::with_base_and_model("http://0.0.0.0:1", "k", "voyage-code-3")
-            .unwrap();
+        let b =
+            VoyageBackend::with_base_and_model("http://0.0.0.0:1", "k", "voyage-code-3").unwrap();
         let out = b.embed(&[]).await.unwrap();
         assert!(out.is_empty());
     }

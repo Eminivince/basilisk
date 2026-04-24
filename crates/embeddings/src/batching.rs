@@ -153,10 +153,7 @@ impl BatchingProvider {
         self
     }
 
-    async fn call_once(
-        &self,
-        inputs: &[EmbeddingInput],
-    ) -> Result<Vec<Embedding>, EmbeddingError> {
+    async fn call_once(&self, inputs: &[EmbeddingInput]) -> Result<Vec<Embedding>, EmbeddingError> {
         if let Some(gate) = &self.gate {
             gate.acquire(estimate_tokens(inputs)).await;
         }
@@ -378,20 +375,16 @@ mod tests {
             fn max_batch_size(&self) -> usize {
                 1
             }
-            async fn embed(
-                &self,
-                _: &[EmbeddingInput],
-            ) -> Result<Vec<Embedding>, EmbeddingError> {
+            async fn embed(&self, _: &[EmbeddingInput]) -> Result<Vec<Embedding>, EmbeddingError> {
                 Err(EmbeddingError::AuthError("401".into()))
             }
         }
-        let wrapped =
-            BatchingProvider::new(Arc::new(AuthErrProvider)).with_retry(RetryConfig {
-                max_retries: 4,
-                base_delay: Duration::from_millis(1),
-                multiplier: 1.1,
-                max_delay: Duration::from_millis(5),
-            });
+        let wrapped = BatchingProvider::new(Arc::new(AuthErrProvider)).with_retry(RetryConfig {
+            max_retries: 4,
+            base_delay: Duration::from_millis(1),
+            multiplier: 1.1,
+            max_delay: Duration::from_millis(5),
+        });
         let err = wrapped
             .embed(&[EmbeddingInput::document("x")])
             .await
@@ -425,8 +418,7 @@ mod tests {
         // refreshes. We use a very short window so the test is fast.
         let gate = Arc::new(TokenBudgetGate::new(10, Duration::from_millis(100)));
         let inner = Arc::new(CountingProvider::new(1));
-        let wrapped =
-            BatchingProvider::new(inner.clone()).with_token_gate(Arc::clone(&gate));
+        let wrapped = BatchingProvider::new(inner.clone()).with_token_gate(Arc::clone(&gate));
         let start = Instant::now();
         // Each call is 8 bytes → estimate 2 tokens.
         for _ in 0..6 {

@@ -93,7 +93,10 @@ To install `audit` as a system binary: `cargo install --path crates/cli`.
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Default LLM provider for `audit recon <target> --agent` | Pick another `--provider` or fall back to deterministic recon |
 | `OPENROUTER_API_KEY` | Agent routing via `--provider openrouter` (any Claude/GPT/Gemini/Llama model) | Use a different provider |
-| `OPENAI_API_KEY` | Agent routing via `--provider openai`; fallback key for `--provider openai-compat` | Use a different provider or supply `--llm-api-key-env` |
+| `OPENAI_API_KEY` | Agent routing via `--provider openai`; fallback key for `--provider openai-compat`; also used as an embedding provider | Use a different provider or supply `--llm-api-key-env` |
+| `VOYAGE_API_KEY` | Primary embedding provider for `audit knowledge` (voyage-code-3) | Falls back to OpenAI or local Ollama |
+| `OLLAMA_HOST` | Local Ollama endpoint for embeddings (`nomic-embed-text`, fully offline) | Defaults to `http://localhost:11434` |
+| `EMBEDDINGS_PROVIDER` | Explicit `voyage`\|`openai`\|`ollama` override | Picks the first configured provider |
 | `ALCHEMY_API_KEY` | Primary RPC for supported chains | Falls back to `RPC_URL_<CHAIN>` or public RPC |
 | `ETHERSCAN_API_KEY` | Verified source, creation-tx lookup, multi-chain via Etherscan V2 | Falls back to Sourcify and Blockscout |
 | `GITHUB_TOKEN` | 5000/hour API rate limit, private-repo access, authenticated clones | 60/hour unauthenticated |
@@ -358,6 +361,83 @@ Aave V3 Pool). They cost real money — run explicitly:
 cargo test -p basilisk-agent --test agent_live -- --ignored --nocapture
 ```
 
+### Knowledge base
+
+Set 7 adds a persistent, user-owned knowledge substrate under
+`~/.basilisk/knowledge/`. The agent gains four retrieval tools
+(`search_knowledge_base`, `search_similar_code`, `search_protocol_docs`,
+`record_finding`); the operator gets `audit knowledge` to curate the
+corpus by hand.
+
+Three layers are supported:
+
+1. **External corpus** — Solodit dump, the SWC registry, and OpenZeppelin
+   security advisories.
+2. **Protocol context** — per-engagement docs ingested from a URL, a PDF,
+   a local file, or a GitHub directory.
+3. **Findings memory** — the agent's own accumulated findings plus
+   human-authored corrections, dismissals, and confirmations.
+
+```console
+# what's stored, where, and which provider embedded it:
+$ audit knowledge stats
+
+# seed the external corpus:
+$ audit knowledge ingest solodit --max-records 1000
+$ audit knowledge ingest swc
+$ audit knowledge ingest openzeppelin
+$ audit knowledge ingest --all
+
+# attach engagement-specific context:
+$ audit knowledge add-protocol aave-v3 --github aave/aave-v3-core:docs
+$ audit knowledge add-protocol aave-v3 --pdf ./aave-v3-whitepaper.pdf
+$ audit knowledge add-protocol aave-v3 --url https://docs.aave.com/developers/
+
+# natural-language retrieval:
+$ audit knowledge search "reentrancy via erc777 callback"
+$ audit knowledge search "rounding direction" --collection public_findings
+
+# findings memory — the agent writes, the operator curates:
+$ audit knowledge list-findings
+$ audit knowledge show-finding <id>
+$ audit knowledge correct <id>  --reason "actually unreachable on mainnet — liquidity guard catches it"
+$ audit knowledge dismiss <id>  --reason "false positive — invariant is maintained by the caller"
+$ audit knowledge confirm <id>
+```
+
+Corrections are stored as sibling rows in the `user_findings` collection
+(columns: `is_correction`, `corrects_id`, `correction_reason`,
+`user_verdict`). Retrieval surfaces them alongside the original finding,
+so the next run benefits from the human verdict without any separate
+"teach the agent" loop.
+
+**Solodit ingester.** Solodit puts content behind Cloudflare, so the
+ingester reads a user-supplied JSONL dump at
+`~/.basilisk/knowledge/solodit_dump.jsonl` (one finding per line) rather
+than scraping live. See the fixture shape in
+`crates/ingest/tests/fixtures/solodit/`.
+
+**Embedding providers** (configure via env or `.env`):
+
+| Variable | What it enables | Without it |
+|---|---|---|
+| `VOYAGE_API_KEY` | Primary embedding provider (`voyage-code-3`, 1024 dims) | Falls back to OpenAI or Ollama |
+| `OPENAI_API_KEY` | `text-embedding-3-large` (3072 dims) — also used for the LLM | Falls back to Ollama if present |
+| `OLLAMA_HOST` | Local Ollama endpoint (`nomic-embed-text`, 768 dims) — fully offline | Defaults to `http://localhost:11434` |
+| `EMBEDDINGS_PROVIDER` | Explicit `voyage`\|`openai`\|`ollama` override | Picks the first configured provider |
+
+Changing providers changes the vector dimension. Each collection carries
+a `schema_version` + `embedding_dim` in its metadata; mismatched writes
+are refused with a pointer to `audit knowledge reembed <collection>`
+(landing in a follow-up set).
+
+**Interim persistence.** The shipping store is a JSON file at
+`~/.basilisk/knowledge/store.json`, plus an ingest-state file alongside.
+The `VectorStore` trait is backend-neutral — the LanceDB-backed
+implementation lands in a follow-up set (tracked in `ROADMAP.md`). The
+JSON store is good for hundreds-to-thousands of records; swap is
+transparent to callers.
+
 ## Architecture
 
 ```
@@ -373,6 +453,10 @@ crates/
 ├── git/         shallow clone with persistent cache, ref resolution (git2)
 ├── project/     source project analysis — config parsing, enumeration, imports
 ├── llm/         model-agnostic LlmBackend trait + Anthropic impl + SSE streaming
+├── embeddings/  EmbeddingProvider trait + Voyage / OpenAI / Ollama backends
+├── vector/      VectorStore trait + collection specs + JSON-backed interim store
+├── ingest/      Solodit / SWC / OpenZeppelin / protocol-docs ingesters
+├── knowledge/   KnowledgeBase public API — retrieval, findings, corrections
 ├── agent/       tool definitions, tool-use loop, sessions (SQLite), prompts
 └── logging/     tracing setup
 ```

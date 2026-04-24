@@ -21,7 +21,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use basilisk_embeddings::{EmbeddingInput, EmbeddingProvider};
-use basilisk_vector::{VectorStore, schema};
+use basilisk_vector::{schema, VectorStore};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -194,7 +194,11 @@ impl Ingester for SoloditIngester {
         let state_file = crate::state::default_state_path();
         let mut persistent = IngestState::load(&state_file)?;
         let prior = persistent.get(self.source_name());
-        let cursor = if options.incremental { prior.cursor.clone() } else { None };
+        let cursor = if options.incremental {
+            prior.cursor.clone()
+        } else {
+            None
+        };
 
         if !self.dump_path.exists() {
             return Err(IngestError::Source(format!(
@@ -206,7 +210,12 @@ impl Ingester for SoloditIngester {
 
         // Parse the JSONL into IngestRecords. Malformed lines go
         // into report.errors and don't halt the run.
-        let rows = read_rows(&self.dump_path, cursor.as_deref(), options.max_records, &mut report)?;
+        let rows = read_rows(
+            &self.dump_path,
+            cursor.as_deref(),
+            options.max_records,
+            &mut report,
+        )?;
         if rows.is_empty() {
             report.duration = start.elapsed();
             return Ok(report);
@@ -229,8 +238,7 @@ impl Ingester for SoloditIngester {
             let mut chunks_flat = Vec::new();
             for row in chunk {
                 let ir = row.clone().into_ingest_record();
-                let normalized =
-                    chunk_record(&ir, embeddings.max_tokens_per_input());
+                let normalized = chunk_record(&ir, embeddings.max_tokens_per_input());
                 chunks_flat.extend(normalized);
             }
             if chunks_flat.is_empty() {
@@ -250,8 +258,10 @@ impl Ingester for SoloditIngester {
                 )));
             }
 
-            report.embedding_tokens_used +=
-                vectors.iter().map(|v| u64::from(v.input_tokens)).sum::<u64>();
+            report.embedding_tokens_used += vectors
+                .iter()
+                .map(|v| u64::from(v.input_tokens))
+                .sum::<u64>();
 
             let mut records = Vec::with_capacity(chunks_flat.len());
             for (norm, emb) in chunks_flat.into_iter().zip(vectors) {
@@ -381,8 +391,14 @@ mod tests {
         assert!(ir.tags.contains(&"category:reentrancy".to_string()));
         assert!(ir.tags.contains(&"auditor:trail of bits".to_string()));
         // Extras preserve original casing for display.
-        assert_eq!(ir.extra.get("severity").and_then(|v| v.as_str()), Some("high"));
-        assert_eq!(ir.extra.get("project").and_then(|v| v.as_str()), Some("aave"));
+        assert_eq!(
+            ir.extra.get("severity").and_then(|v| v.as_str()),
+            Some("high")
+        );
+        assert_eq!(
+            ir.extra.get("project").and_then(|v| v.as_str()),
+            Some("aave")
+        );
         assert_eq!(
             ir.extra.get("date").and_then(|v| v.as_str()),
             Some("2024-06-01"),
@@ -485,18 +501,34 @@ mod tests {
         #[async_trait]
         impl EmbeddingProvider for MockEmbed {
             #[allow(clippy::unnecessary_literal_bound)]
-            fn identifier(&self) -> &str { "mock/embed" }
-            fn dimensions(&self) -> usize { 4 }
-            fn max_tokens_per_input(&self) -> usize { 1000 }
-            fn max_batch_size(&self) -> usize { 32 }
-            async fn embed(&self, inputs: &[EmbeddingInput]) -> Result<Vec<Embedding>, basilisk_embeddings::EmbeddingError> {
-                Ok(inputs.iter().map(|_| Embedding { vector: vec![0.0; 4], input_tokens: 1 }).collect())
+            fn identifier(&self) -> &str {
+                "mock/embed"
+            }
+            fn dimensions(&self) -> usize {
+                4
+            }
+            fn max_tokens_per_input(&self) -> usize {
+                1000
+            }
+            fn max_batch_size(&self) -> usize {
+                32
+            }
+            async fn embed(
+                &self,
+                inputs: &[EmbeddingInput],
+            ) -> Result<Vec<Embedding>, basilisk_embeddings::EmbeddingError> {
+                Ok(inputs
+                    .iter()
+                    .map(|_| Embedding {
+                        vector: vec![0.0; 4],
+                        input_tokens: 1,
+                    })
+                    .collect())
             }
         }
 
         let ingester = SoloditIngester::at_path("/tmp/definitely-missing-path.jsonl");
-        let store: Arc<dyn VectorStore> =
-            Arc::new(basilisk_vector::MemoryVectorStore::new());
+        let store: Arc<dyn VectorStore> = Arc::new(basilisk_vector::MemoryVectorStore::new());
         let embed: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbed);
         let err = ingester
             .ingest(store, embed, IngestOptions::default())

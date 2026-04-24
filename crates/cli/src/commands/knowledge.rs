@@ -1,101 +1,238 @@
 //! `audit knowledge` — manage the knowledge base.
 //!
-//! CP7.4 ships only the subcommand skeleton — the enum + a
-//! functional `stats` + an `ingest <source>` stub that dispatches
-//! to the right `basilisk-ingest::Ingester` once those land in
-//! CP7.5–CP7.7. The remaining commands (`list-findings`,
-//! `show-finding`, `correct`, `dismiss`, `confirm`, `search`,
-//! `show`, `export`, `import`, `clear`, `reembed`, `add-protocol`,
-//! `list-protocols`, `remove-protocol`) land in CP7.10 once
-//! `basilisk-knowledge` (CP7.8) provides the API they call.
+//! Commands shipped in CP7.10:
 //!
-//! The skeleton lands here (earlier than the original spec's
-//! position at CP7.11) so CP7.5–CP7.7 ingester work can be
-//! smoke-tested via `audit knowledge ingest <source>
-//! --max-records 5` as each lands.
+//!  - `stats` / `ingest <source>` / `ingest --all`
+//!  - `add-protocol <engagement-id> --url|--pdf|--file|--github`
+//!  - `list-findings [--session|--severity]` / `show-finding <id>`
+//!  - `correct <id> --reason <text>` / `dismiss <id>` / `confirm <id>`
+//!  - `search <query>` / `search-code <path>`
+//!  - `clear <collection> [--yes]` / `clear --all [--yes]`
+//!
+//! Persistence uses [`basilisk_vector::FileVectorStore`] at
+//! `~/.basilisk/knowledge/store.json` — interim until the
+//! LanceDB-backed store lands. Good for dogfooding and small-
+//! operator corpora; the trait surface is identical so the swap
+//! is transparent.
 
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use basilisk_core::Config;
-use basilisk_ingest::{default_state_path, IngestState};
-use basilisk_vector::{schema, MemoryVectorStore, VectorStore};
+use basilisk_embeddings::{
+    build_provider, EmbeddingProvider, ProviderKind as EmbedProviderKind, ProviderSelection,
+};
+use basilisk_git::RepoCache;
+use basilisk_ingest::{
+    IngestOptions, Ingester, OzAdvisoriesIngester, ProtocolIngester, ProtocolSource,
+    SoloditIngester, SwcIngester,
+};
+use basilisk_knowledge::{Correction, FindingId, KnowledgeBase, SearchFilters, UserVerdict};
+use basilisk_vector::{FileVectorStore, VectorStore};
 use clap::{Args, Subcommand};
 
 #[derive(Debug, Subcommand)]
 pub enum KnowledgeCmd {
-    /// Show collection sizes, last-ingest timestamps, schema
-    /// versions. The "what's in my knowledge base" command.
+    /// Show collection sizes, last-ingest timestamps, schema versions.
     Stats(StatsArgs),
-    /// Ingest an external corpus. Concrete ingesters land in
-    /// CP7.5–CP7.7.
+    /// Ingest an external corpus (or all of them).
     Ingest(IngestArgs),
+    /// Attach documentation for a specific engagement.
+    AddProtocol(AddProtocolArgs),
+    /// List findings stored in `user_findings`.
+    ListFindings(ListFindingsArgs),
+    /// Show one finding in full.
+    ShowFinding(ShowFindingArgs),
+    /// Record a human correction against a finding.
+    Correct(CorrectArgs),
+    /// Mark a finding as a false positive.
+    Dismiss(DismissArgs),
+    /// Mark a finding as confirmed by human review.
+    Confirm(ConfirmArgs),
+    /// Natural-language search across collections.
+    Search(SearchArgs),
+    /// Drop a collection. Destructive; confirms unless `--yes`.
+    Clear(ClearArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct StatsArgs {
-    /// Path to the knowledge-base directory. Defaults to
-    /// `~/.basilisk/knowledge`.
     #[arg(long)]
-    pub knowledge_dir: Option<std::path::PathBuf>,
+    pub knowledge_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
 pub struct IngestArgs {
-    /// Corpus to ingest: `solodit`, `swc`, `openzeppelin`, or
-    /// `--all`. The `--all` shortcut runs every registered
-    /// ingester in sequence; a failure in one does not stop the
-    /// others.
+    /// Corpus name: `solodit`, `swc`, `openzeppelin`.
     pub source: Option<String>,
-
-    /// Run every ingester sequentially. Mutually exclusive with
-    /// an explicit source argument.
     #[arg(long, conflicts_with = "source")]
     pub all: bool,
-
-    /// Cap the number of records processed. Useful for smoke-
-    /// testing as the ingesters land. `None` = unlimited.
     #[arg(long)]
     pub max_records: Option<usize>,
-
-    /// When `false`, re-ingest every record instead of picking up
-    /// from the last cursor. Defaults to `true`.
     #[arg(long, default_value_t = true)]
     pub incremental: bool,
 }
 
-pub async fn run(cmd: &KnowledgeCmd, _config: &Config) -> Result<()> {
+#[derive(Debug, Args)]
+pub struct AddProtocolArgs {
+    /// Engagement id — any string; used to scope retrieval later.
+    pub engagement_id: String,
+    #[arg(long, conflicts_with_all = ["pdf", "file", "github"])]
+    pub url: Option<String>,
+    #[arg(long, conflicts_with_all = ["url", "file", "github"])]
+    pub pdf: Option<PathBuf>,
+    #[arg(long, conflicts_with_all = ["url", "pdf", "github"])]
+    pub file: Option<PathBuf>,
+    /// `owner/repo[:subdir]` form. Example: `OpenZeppelin/openzeppelin-contracts:docs`.
+    #[arg(long, conflicts_with_all = ["url", "pdf", "file"])]
+    pub github: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct ListFindingsArgs {
+    #[arg(long)]
+    pub session: Option<String>,
+    #[arg(long)]
+    pub severity: Option<String>,
+    #[arg(long, default_value_t = 50)]
+    pub limit: usize,
+}
+
+#[derive(Debug, Args)]
+pub struct ShowFindingArgs {
+    pub id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct CorrectArgs {
+    pub id: String,
+    #[arg(long)]
+    pub reason: String,
+    #[arg(long)]
+    pub severity: Option<String>,
+    #[arg(long)]
+    pub category: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct DismissArgs {
+    pub id: String,
+    #[arg(long)]
+    pub reason: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ConfirmArgs {
+    pub id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct SearchArgs {
+    pub query: String,
+    #[arg(long)]
+    pub collection: Option<String>,
+    #[arg(long)]
+    pub kind: Option<String>,
+    #[arg(long)]
+    pub severity: Option<String>,
+    #[arg(long, default_value_t = 10)]
+    pub limit: usize,
+}
+
+#[derive(Debug, Args)]
+pub struct ClearArgs {
+    /// Collection name. Mutually exclusive with `--all`.
+    pub collection: Option<String>,
+    #[arg(long, conflicts_with = "collection")]
+    pub all: bool,
+    #[arg(long)]
+    pub yes: bool,
+}
+
+pub async fn run(cmd: &KnowledgeCmd, config: &Config) -> Result<()> {
     match cmd {
-        KnowledgeCmd::Stats(args) => run_stats(args).await,
-        KnowledgeCmd::Ingest(args) => run_ingest(args).await,
+        KnowledgeCmd::Stats(args) => run_stats(args, config).await,
+        KnowledgeCmd::Ingest(args) => run_ingest(args, config).await,
+        KnowledgeCmd::AddProtocol(args) => run_add_protocol(args, config).await,
+        KnowledgeCmd::ListFindings(args) => run_list_findings(args, config).await,
+        KnowledgeCmd::ShowFinding(args) => run_show_finding(args, config).await,
+        KnowledgeCmd::Correct(args) => run_correct(args, config).await,
+        KnowledgeCmd::Dismiss(args) => run_dismiss(args, config).await,
+        KnowledgeCmd::Confirm(args) => run_confirm(args, config).await,
+        KnowledgeCmd::Search(args) => run_search(args, config).await,
+        KnowledgeCmd::Clear(args) => run_clear(args, config).await,
     }
 }
 
-async fn run_stats(_args: &StatsArgs) -> Result<()> {
-    // CP7.4: in-memory store so `stats` runs cleanly on a fresh
-    // machine without requiring LanceDB. CP7.3b replaces this
-    // with a LanceDbStore wired to ~/.basilisk/knowledge/.
-    let store: Arc<dyn VectorStore> = Arc::new(MemoryVectorStore::new());
+/// Default knowledge base path: `~/.basilisk/knowledge/store.json`.
+/// Every command resolves this unless an override is supplied.
+fn default_store_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".basilisk")
+        .join("knowledge")
+        .join("store.json")
+}
 
-    let collections = store
-        .list_collections()
+/// Build an embedding provider from Config + env. Centralised
+/// here so every command picks the same provider.
+fn build_embeddings(config: &Config) -> Result<Arc<dyn EmbeddingProvider>> {
+    let selection = ProviderSelection {
+        provider: config
+            .embeddings_provider
+            .as_deref()
+            .and_then(EmbedProviderKind::parse),
+        voyage_api_key: config.voyage_api_key.clone(),
+        openai_api_key: config.openai_api_key.clone(),
+        ollama_host: config.ollama_host.clone(),
+        model: None,
+        voyage_token_rate_per_minute: None,
+    };
+    build_provider(&selection).context("building embedding provider")
+}
+
+async fn open_store() -> Result<Arc<FileVectorStore>> {
+    FileVectorStore::open(default_store_path())
         .await
-        .context("listing collections")?;
+        .context("opening knowledge store")
+}
 
+async fn open_kb(config: &Config) -> Result<KnowledgeBase> {
+    let store = open_store().await?;
+    let embeddings = build_embeddings(config)?;
+    Ok(KnowledgeBase::new(
+        store as Arc<dyn VectorStore>,
+        embeddings,
+    ))
+}
+
+// --- stats -----------------------------------------------------------
+
+async fn run_stats(_args: &StatsArgs, config: &Config) -> Result<()> {
+    let store = open_store().await?;
+    // Embedding provider is informational for stats; if none is
+    // available we still want to list collections.
+    let embed_result = build_embeddings(config);
+
+    let collections = store.list_collections().await?;
     if collections.is_empty() {
-        // Fresh knowledge base — nothing created yet. Show the
-        // shipped collection names so operators know what to expect
-        // once ingestion runs.
-        println!("knowledge base is empty");
+        println!(
+            "knowledge base is empty at {}",
+            default_store_path().display()
+        );
         println!();
         println!("shipped collections (created on first ingest):");
-        for name in schema::ALL_COLLECTIONS {
-            println!("  - {name}");
+        for n in basilisk_vector::schema::ALL_COLLECTIONS {
+            println!("  - {n}");
         }
     } else {
+        println!("store: {}", default_store_path().display());
+        println!();
         println!(
             "{:<20}  {:>8}  {:>6}  provider",
-            "collection", "records", "dim",
+            "collection", "records", "dim"
         );
         for c in collections {
             println!(
@@ -105,52 +242,410 @@ async fn run_stats(_args: &StatsArgs) -> Result<()> {
         }
     }
 
-    // Incremental-ingest state summary.
-    let state_path = default_state_path();
-    let state = IngestState::load(&state_path).context("reading ingest state")?;
+    println!();
+    match embed_result {
+        Ok(p) => println!(
+            "current embedding provider: {} (dim={})",
+            p.identifier(),
+            p.dimensions(),
+        ),
+        Err(e) => println!("embedding provider not configured: {e}"),
+    }
+
+    // Incremental-ingest state.
+    let state_path = basilisk_ingest::default_state_path();
+    let state = basilisk_ingest::IngestState::load(&state_path).unwrap_or_default();
     println!();
     if state.sources.is_empty() {
         println!("no incremental ingest state recorded yet");
     } else {
         println!("ingest state ({}):", state_path.display());
         for (name, s) in &state.sources {
-            let cursor = s.cursor.as_deref().unwrap_or("-");
             let last = s
                 .last_run_unix
                 .map_or_else(|| "-".into(), |t| t.to_string());
+            let cursor = s.cursor.as_deref().unwrap_or("-");
             println!(
-                "  {name:<14} records={:>8}  cursor={cursor:<24}  last_run={last}",
+                "  {name:<20} records={:>8} cursor={cursor:<48} last={last}",
                 s.records_ingested,
             );
         }
     }
-
     Ok(())
 }
 
-// `async fn` kept despite no await — the real dispatch (CP7.5+)
-// will call ingesters that are themselves async. Changing the
-// shape now and again next commit is churn.
-#[allow(clippy::unused_async)]
-async fn run_ingest(args: &IngestArgs) -> Result<()> {
-    // CP7.4 stub. The concrete dispatch lands commit-by-commit as
-    // each ingester arrives (Solodit in CP7.5, SWC+OZ in CP7.6,
-    // protocol-context in CP7.7). This stub simply reports which
-    // ingester would run so the CLI + state-file machinery is
-    // exercisable while the ETL is under development.
-    if args.all {
-        println!("would run all registered ingesters sequentially");
-        println!("(none registered yet — CP7.5–CP7.7 will add Solodit / SWC / OpenZeppelin / protocol-context)");
+// --- ingest ----------------------------------------------------------
+
+async fn run_ingest(args: &IngestArgs, config: &Config) -> Result<()> {
+    let store = open_store().await?;
+    let embeddings = build_embeddings(config)?;
+
+    let ingesters = if args.all {
+        available_ingesters(config)
+    } else {
+        let name = args
+            .source
+            .as_deref()
+            .context("specify a source or --all (sources: solodit, swc, openzeppelin, protocol)")?;
+        if let Some(i) = ingester_by_name(name, config)? {
+            vec![i]
+        } else {
+            eprintln!("unknown source: {name}");
+            return Ok(());
+        }
+    };
+
+    let options = IngestOptions {
+        incremental: args.incremental,
+        max_records: args.max_records,
+        ..Default::default()
+    };
+
+    for ingester in ingesters {
+        let name = ingester.source_name().to_string();
+        println!("→ ingesting {name}");
+        match ingester
+            .ingest(
+                store.clone() as Arc<dyn VectorStore>,
+                embeddings.clone(),
+                options.clone(),
+            )
+            .await
+        {
+            Ok(report) => {
+                println!(
+                    "  {name}: scanned={}, new={}, updated={}, skipped={}, tokens={}, errors={}, {:.1}s",
+                    report.records_scanned,
+                    report.records_new,
+                    report.records_updated,
+                    report.records_skipped,
+                    report.embedding_tokens_used,
+                    report.errors.len(),
+                    report.duration.as_secs_f32(),
+                );
+                for (id, err) in report.errors.iter().take(3) {
+                    println!("    ! {id}: {err}");
+                }
+            }
+            Err(e) => {
+                // One ingester failing doesn't stop the others.
+                eprintln!("  {name}: FAILED: {e}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Return every ingester the CLI knows how to build, in a stable
+/// order so `--all` produces a reproducible sequence.
+fn available_ingesters(config: &Config) -> Vec<Box<dyn Ingester>> {
+    let repo_cache = Arc::new(
+        RepoCache::open()
+            .unwrap_or_else(|_| panic!("can't open repo cache — check filesystem permissions")),
+    );
+    let mut out: Vec<Box<dyn Ingester>> = Vec::new();
+    out.push(Box::new(SoloditIngester::new()));
+    out.push(Box::new(SwcIngester::new(Arc::clone(&repo_cache))));
+    let mut oz = OzAdvisoriesIngester::new();
+    if let Some(tok) = &config.github_token {
+        oz = oz.with_token(tok.clone());
+    }
+    out.push(Box::new(oz));
+    out
+}
+
+fn ingester_by_name(name: &str, config: &Config) -> Result<Option<Box<dyn Ingester>>> {
+    match name {
+        "solodit" => Ok(Some(Box::new(SoloditIngester::new()))),
+        "swc" => {
+            let repo_cache = Arc::new(RepoCache::open().context("opening repo cache")?);
+            Ok(Some(Box::new(SwcIngester::new(repo_cache))))
+        }
+        "openzeppelin" => {
+            let mut oz = OzAdvisoriesIngester::new();
+            if let Some(tok) = &config.github_token {
+                oz = oz.with_token(tok.clone());
+            }
+            Ok(Some(Box::new(oz)))
+        }
+        _ => Ok(None),
+    }
+}
+
+// --- add-protocol ----------------------------------------------------
+
+async fn run_add_protocol(args: &AddProtocolArgs, config: &Config) -> Result<()> {
+    let source = pick_protocol_source(args)?;
+    let repo_cache = if matches!(source, ProtocolSource::GithubDir { .. }) {
+        Some(Arc::new(RepoCache::open().context("opening repo cache")?))
+    } else {
+        None
+    };
+    let ingester = ProtocolIngester::new(args.engagement_id.clone(), source, repo_cache);
+    let store = open_store().await?;
+    let embeddings = build_embeddings(config)?;
+    println!(
+        "→ ingesting protocol docs for engagement '{}'",
+        args.engagement_id
+    );
+    let report = ingester
+        .ingest(
+            store as Arc<dyn VectorStore>,
+            embeddings,
+            IngestOptions::default(),
+        )
+        .await?;
+    println!(
+        "  scanned={}, new={}, updated={}, errors={}, {:.1}s",
+        report.records_scanned,
+        report.records_new,
+        report.records_updated,
+        report.errors.len(),
+        report.duration.as_secs_f32(),
+    );
+    Ok(())
+}
+
+fn pick_protocol_source(args: &AddProtocolArgs) -> Result<ProtocolSource> {
+    if let Some(url) = &args.url {
+        return Ok(ProtocolSource::Url(url.clone()));
+    }
+    if let Some(pdf) = &args.pdf {
+        return Ok(ProtocolSource::Pdf(pdf.clone()));
+    }
+    if let Some(file) = &args.file {
+        return Ok(ProtocolSource::File(file.clone()));
+    }
+    if let Some(spec) = &args.github {
+        let (repo_part, subdir) = match spec.split_once(':') {
+            Some((r, s)) => (r, Some(PathBuf::from(s))),
+            None => (spec.as_str(), None),
+        };
+        let (owner, repo) = repo_part
+            .split_once('/')
+            .context("--github expects 'owner/repo[:subdir]' form")?;
+        return Ok(ProtocolSource::GithubDir {
+            owner: owner.to_string(),
+            repo: repo.to_string(),
+            subdir,
+        });
+    }
+    anyhow::bail!("specify one of --url / --pdf / --file / --github")
+}
+
+// --- list-findings + show-finding ------------------------------------
+
+async fn run_list_findings(args: &ListFindingsArgs, config: &Config) -> Result<()> {
+    let kb = open_kb(config).await?;
+    let filters = SearchFilters {
+        collections: vec![basilisk_vector::schema::USER_FINDINGS.into()],
+        severity: args.severity.clone(),
+        include_corrections: false,
+        ..Default::default()
+    };
+    // Use a zero vector by searching with a generic query that
+    // triggers the embedding path; result ordering is irrelevant
+    // for listing. The limit governs output.
+    let hits = kb.search("findings listing", filters, args.limit).await?;
+    if hits.is_empty() {
+        println!("no findings recorded");
         return Ok(());
     }
-    let source = args
-        .source
-        .as_deref()
-        .context("specify a source (solodit / swc / openzeppelin / protocol) or --all")?;
     println!(
-        "would ingest source={source} incremental={} max_records={:?}",
-        args.incremental, args.max_records,
+        "{:<16}  {:<10}  {:<14}  {:<24}  title",
+        "id", "severity", "category", "target",
     );
-    println!("(no ingesters registered yet — CP7.5 lands Solodit first)");
+    for h in &hits {
+        let sev = h
+            .metadata
+            .extra
+            .get("severity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("-");
+        let cat = h
+            .metadata
+            .extra
+            .get("category")
+            .and_then(|v| v.as_str())
+            .unwrap_or("-");
+        let target = h
+            .metadata
+            .extra
+            .get("target")
+            .and_then(|v| v.as_str())
+            .unwrap_or("-");
+        // Filter by session if set — we don't push this into
+        // VectorStore::search because session_id lives in
+        // metadata.extra and Filter::Equals on nested JSON paths
+        // is post-filtered by the memory store anyway.
+        if let Some(session) = &args.session {
+            let hit_session = h.metadata.extra.get("session_id").and_then(|v| v.as_str());
+            if hit_session != Some(session.as_str()) {
+                continue;
+            }
+        }
+        let id_short = h.id.get(..14).unwrap_or(&h.id);
+        let title = h.text.lines().next().unwrap_or("");
+        println!("{id_short}  {sev:<10}  {cat:<14}  {target:<24}  {title}",);
+    }
+    Ok(())
+}
+
+async fn run_show_finding(args: &ShowFindingArgs, config: &Config) -> Result<()> {
+    let kb = open_kb(config).await?;
+    let id = FindingId::new(&args.id);
+    if let Some(r) = kb.get_finding(&id).await? {
+        println!("id:          {}", r.id);
+        println!("source:      {}", r.metadata.source);
+        println!("kind:        {}", r.metadata.kind);
+        if let Some(sev) = r.metadata.extra.get("severity").and_then(|v| v.as_str()) {
+            println!("severity:    {sev}");
+        }
+        if let Some(cat) = r.metadata.extra.get("category").and_then(|v| v.as_str()) {
+            println!("category:    {cat}");
+        }
+        if let Some(target) = r.metadata.extra.get("target").and_then(|v| v.as_str()) {
+            println!("target:      {target}");
+        }
+        if let Some(session) = r.metadata.extra.get("session_id").and_then(|v| v.as_str()) {
+            println!("session:     {session}");
+        }
+        println!();
+        println!("{}", r.text);
+    } else {
+        eprintln!("no finding with id {}", args.id);
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+// --- correct / dismiss / confirm -------------------------------------
+
+async fn run_correct(args: &CorrectArgs, config: &Config) -> Result<()> {
+    let kb = open_kb(config).await?;
+    kb.record_correction(
+        &FindingId::new(&args.id),
+        Correction {
+            reason: args.reason.clone(),
+            corrected_severity: args.severity.clone(),
+            corrected_category: args.category.clone(),
+        },
+    )
+    .await
+    .with_context(|| format!("correcting finding {}", args.id))?;
+    println!("corrected {}", args.id);
+    Ok(())
+}
+
+async fn run_dismiss(args: &DismissArgs, config: &Config) -> Result<()> {
+    let kb = open_kb(config).await?;
+    kb.record_correction(
+        &FindingId::new(&args.id),
+        Correction {
+            reason: args.reason.clone(),
+            corrected_severity: None,
+            corrected_category: None,
+        },
+    )
+    .await
+    .with_context(|| format!("dismissing finding {}", args.id))?;
+    kb.record_verdict(&FindingId::new(&args.id), UserVerdict::Dismissed)
+        .await?;
+    println!("dismissed {}", args.id);
+    Ok(())
+}
+
+async fn run_confirm(args: &ConfirmArgs, config: &Config) -> Result<()> {
+    let kb = open_kb(config).await?;
+    kb.record_verdict(&FindingId::new(&args.id), UserVerdict::Confirmed)
+        .await
+        .with_context(|| format!("confirming finding {}", args.id))?;
+    println!("confirmed {}", args.id);
+    Ok(())
+}
+
+// --- search ----------------------------------------------------------
+
+async fn run_search(args: &SearchArgs, config: &Config) -> Result<()> {
+    let kb = open_kb(config).await?;
+    let filters = SearchFilters {
+        collections: args.collection.clone().map(|c| vec![c]).unwrap_or_default(),
+        kind: args.kind.clone(),
+        severity: args.severity.clone(),
+        include_corrections: true,
+        ..Default::default()
+    };
+    let hits = kb.search(&args.query, filters, args.limit).await?;
+    if hits.is_empty() {
+        println!("no matches");
+        return Ok(());
+    }
+    for (i, h) in hits.iter().enumerate() {
+        let title = h.text.lines().next().unwrap_or("");
+        println!(
+            "{i:>2}. [{:.3}] {source:<12} {kind:<10} {id}",
+            h.score,
+            source = h.source,
+            kind = h.kind,
+            id = h.id.get(..14).unwrap_or(&h.id),
+        );
+        println!("    {title}");
+        if !h.corrections.is_empty() {
+            for c in &h.corrections {
+                println!("    ! correction: {}", c.reason);
+            }
+        }
+    }
+    Ok(())
+}
+
+// --- clear -----------------------------------------------------------
+
+async fn run_clear(args: &ClearArgs, _config: &Config) -> Result<()> {
+    let store = open_store().await?;
+    let targets: Vec<String> = if args.all {
+        store
+            .list_collections()
+            .await?
+            .into_iter()
+            .map(|c| c.name)
+            .collect()
+    } else {
+        vec![args
+            .collection
+            .clone()
+            .context("specify a collection or --all")?]
+    };
+
+    if !args.yes {
+        let label = if args.all {
+            "ALL collections".to_string()
+        } else {
+            format!(
+                "collection '{}'",
+                targets.first().map_or("?", String::as_str)
+            )
+        };
+        eprintln!(
+            "About to delete {label} from {}.",
+            default_store_path().display()
+        );
+        eprint!("Type 'y' to confirm: ");
+        let _ = std::io::stderr().flush();
+        let mut buf = [0u8; 2];
+        let n = std::io::Read::read(&mut std::io::stdin(), &mut buf).unwrap_or(0);
+        let answer = std::str::from_utf8(&buf[..n]).unwrap_or("").trim();
+        if answer != "y" && answer != "Y" {
+            eprintln!("aborted");
+            return Ok(());
+        }
+    }
+
+    for name in &targets {
+        match store.delete_collection(name).await {
+            Ok(()) => println!("cleared {name}"),
+            Err(e) => eprintln!("  {name}: {e}"),
+        }
+    }
     Ok(())
 }

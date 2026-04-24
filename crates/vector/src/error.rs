@@ -31,9 +31,7 @@ pub enum VectorError {
     /// collection's dimension but received something different.
     /// Usually signals the caller's embedding provider changed
     /// without a `reembed`.
-    #[error(
-        "vector dimension mismatch in '{collection}': expected {expected}, got {actual}"
-    )]
+    #[error("vector dimension mismatch in '{collection}': expected {expected}, got {actual}")]
     DimensionMismatch {
         collection: String,
         expected: usize,
@@ -51,10 +49,7 @@ pub enum VectorError {
 
     /// Low-level storage I/O failed.
     #[error("storage error at {path}: {message}")]
-    Storage {
-        path: PathBuf,
-        message: String,
-    },
+    Storage { path: PathBuf, message: String },
 
     /// Backend-specific error we couldn't classify more precisely.
     #[error("backend error: {0}")]

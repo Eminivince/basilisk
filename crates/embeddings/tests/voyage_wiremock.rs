@@ -164,10 +164,7 @@ async fn parse_error_when_response_shape_mismatches_expected_count() {
         .mount(&server)
         .await;
     let err = backend(&server)
-        .embed(&[
-            EmbeddingInput::document("a"),
-            EmbeddingInput::document("b"),
-        ])
+        .embed(&[EmbeddingInput::document("a"), EmbeddingInput::document("b")])
         .await
         .unwrap_err();
     assert!(matches!(err, EmbeddingError::ParseError(_)));

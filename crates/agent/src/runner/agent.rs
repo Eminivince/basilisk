@@ -96,10 +96,7 @@ impl AgentRunner {
     /// [`ToolContext`](crate::tool::ToolContext) will expose the
     /// handle so knowledge tools can use it.
     #[must_use]
-    pub fn with_knowledge(
-        mut self,
-        kb: Arc<basilisk_knowledge::KnowledgeBase>,
-    ) -> Self {
+    pub fn with_knowledge(mut self, kb: Arc<basilisk_knowledge::KnowledgeBase>) -> Self {
         self.knowledge = Some(kb);
         self
     }

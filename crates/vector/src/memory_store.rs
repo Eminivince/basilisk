@@ -221,7 +221,9 @@ impl VectorStore for MemoryVectorStore {
 
 impl MemoryVectorStore {
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Collection>> {
-        self.collections.lock().expect("memory vector store poisoned")
+        self.collections
+            .lock()
+            .expect("memory vector store poisoned")
     }
 }
 
@@ -248,8 +250,9 @@ pub(crate) fn matches_filters(filters: &[Filter], metadata: &Metadata) -> bool {
 fn matches_filter(filter: &Filter, metadata: &Metadata) -> bool {
     match filter {
         Filter::Equals { field, value } => get_field(metadata, field) == Some(value.clone()),
-        Filter::In { field, values } => get_field(metadata, field)
-            .is_some_and(|v| values.contains(&v)),
+        Filter::In { field, values } => {
+            get_field(metadata, field).is_some_and(|v| values.contains(&v))
+        }
         Filter::Contains { field, substring } => get_field(metadata, field)
             .and_then(|v| v.as_str().map(std::string::ToString::to_string))
             .is_some_and(|s| s.contains(substring)),
@@ -346,10 +349,7 @@ mod tests {
             .await
             .unwrap();
         let err = store
-            .create_collection(schema::user_findings(
-                "openai/text-embedding-3-large",
-                3072,
-            ))
+            .create_collection(schema::user_findings("openai/text-embedding-3-large", 3072))
             .await
             .unwrap_err();
         assert!(matches!(err, VectorError::IncompatibleSpec { .. }));
@@ -363,10 +363,7 @@ mod tests {
             .await
             .unwrap();
         let err = store
-            .upsert(
-                "user_findings",
-                vec![rec("x", vec![1.0, 2.0], "s", "k")],
-            )
+            .upsert("user_findings", vec![rec("x", vec![1.0, 2.0], "s", "k")])
             .await
             .unwrap_err();
         assert!(matches!(err, VectorError::DimensionMismatch { .. }));
@@ -451,7 +448,11 @@ mod tests {
     #[tokio::test]
     async fn get_none_for_unknown_id() {
         let store = seeded().await;
-        assert!(store.get("user_findings", "missing").await.unwrap().is_none());
+        assert!(store
+            .get("user_findings", "missing")
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
@@ -498,9 +499,8 @@ mod tests {
         let hits = store
             .search(
                 "advisories",
-                SearchQuery::new(vec![1.0, 1.0], 10).with_filter(Filter::TagsAny(vec![
-                    "severity:high".into(),
-                ])),
+                SearchQuery::new(vec![1.0, 1.0], 10)
+                    .with_filter(Filter::TagsAny(vec!["severity:high".into()])),
             )
             .await
             .unwrap();

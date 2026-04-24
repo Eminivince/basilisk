@@ -248,8 +248,10 @@ impl Ingester for OzAdvisoriesIngester {
                 .map(|c| EmbeddingInput::document(&c.text))
                 .collect();
             let vectors = embeddings.embed(&inputs).await?;
-            report.embedding_tokens_used +=
-                vectors.iter().map(|v| u64::from(v.input_tokens)).sum::<u64>();
+            report.embedding_tokens_used += vectors
+                .iter()
+                .map(|v| u64::from(v.input_tokens))
+                .sum::<u64>();
             let records: Vec<_> = batch
                 .iter()
                 .cloned()
@@ -384,10 +386,7 @@ mod tests {
         assert_eq!(ir.source_id, "GHSA-xxxx-yyyy-zzzz");
         assert_eq!(ir.kind, "advisory");
         assert!(ir.tags.contains(&"severity:high".to_string()));
-        assert!(ir
-            .tags
-            .iter()
-            .any(|t| t.starts_with("cve:cve-2024-12345")));
+        assert!(ir.tags.iter().any(|t| t.starts_with("cve:cve-2024-12345")));
         assert!(ir
             .tags
             .iter()

@@ -16,15 +16,12 @@
 //! instead of crashing.
 
 use async_trait::async_trait;
-use basilisk_knowledge::{
-    FindingLocation, FindingRecord, KnowledgeBase, SearchFilters,
-};
+use basilisk_knowledge::{FindingLocation, FindingRecord, KnowledgeBase, SearchFilters};
 use serde::Deserialize;
 
 use crate::tool::{Tool, ToolContext, ToolResult};
 
-const SCHEMA_QUERY_FIELD: &str =
-    "Short natural-language description of the pattern or concern.";
+const SCHEMA_QUERY_FIELD: &str = "Short natural-language description of the pattern or concern.";
 
 fn kb_or_err(ctx: &ToolContext) -> Result<&KnowledgeBase, ToolResult> {
     ctx.knowledge.as_deref().ok_or_else(|| {
@@ -115,11 +112,7 @@ impl Tool for SearchKnowledgeBase {
         })
     }
 
-    async fn execute(
-        &self,
-        input: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> ToolResult {
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let args: SearchArgs = match serde_json::from_value(input) {
             Ok(v) => v,
             Err(e) => return ToolResult::err(format!("invalid input: {e}"), false),
@@ -195,11 +188,7 @@ impl Tool for SearchSimilarCode {
         })
     }
 
-    async fn execute(
-        &self,
-        input: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> ToolResult {
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let args: SimilarCodeArgs = match serde_json::from_value(input) {
             Ok(v) => v,
             Err(e) => return ToolResult::err(format!("invalid input: {e}"), false),
@@ -267,11 +256,7 @@ impl Tool for SearchProtocolDocs {
         })
     }
 
-    async fn execute(
-        &self,
-        input: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> ToolResult {
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let args: ProtocolDocsArgs = match serde_json::from_value(input) {
             Ok(v) => v,
             Err(e) => return ToolResult::err(format!("invalid input: {e}"), false),
@@ -376,11 +361,7 @@ impl Tool for RecordFinding {
         })
     }
 
-    async fn execute(
-        &self,
-        input: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> ToolResult {
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let args: RecordFindingArgs = match serde_json::from_value(input) {
             Ok(v) => v,
             Err(e) => return ToolResult::err(format!("invalid input: {e}"), false),
@@ -440,10 +421,7 @@ mod tests {
         fn max_batch_size(&self) -> usize {
             32
         }
-        async fn embed(
-            &self,
-            inputs: &[EmbeddingInput],
-        ) -> Result<Vec<Embedding>, EmbeddingError> {
+        async fn embed(&self, inputs: &[EmbeddingInput]) -> Result<Vec<Embedding>, EmbeddingError> {
             Ok(inputs
                 .iter()
                 .map(|i| Embedding {
@@ -562,7 +540,13 @@ mod tests {
                 &ctx,
             )
             .await;
-        assert!(matches!(result, ToolResult::Err { retryable: false, .. }));
+        assert!(matches!(
+            result,
+            ToolResult::Err {
+                retryable: false,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -571,7 +555,13 @@ mod tests {
         let result = SearchSimilarCode
             .execute(serde_json::json!({"code_snippet": ""}), &ctx)
             .await;
-        assert!(matches!(result, ToolResult::Err { retryable: false, .. }));
+        assert!(matches!(
+            result,
+            ToolResult::Err {
+                retryable: false,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -607,7 +597,10 @@ mod tests {
     #[test]
     fn tool_names_and_descriptions_nonempty() {
         for (name, desc) in [
-            (SearchKnowledgeBase.name(), SearchKnowledgeBase.description()),
+            (
+                SearchKnowledgeBase.name(),
+                SearchKnowledgeBase.description(),
+            ),
             (SearchSimilarCode.name(), SearchSimilarCode.description()),
             (SearchProtocolDocs.name(), SearchProtocolDocs.description()),
             (RecordFinding.name(), RecordFinding.description()),

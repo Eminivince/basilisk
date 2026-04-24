@@ -375,7 +375,10 @@ fn classify_reqwest_error(e: reqwest::Error) -> EmbeddingError {
     }
 }
 
-async fn map_http_error(status: reqwest::StatusCode, response: reqwest::Response) -> EmbeddingError {
+async fn map_http_error(
+    status: reqwest::StatusCode,
+    response: reqwest::Response,
+) -> EmbeddingError {
     let retry_after = response
         .headers()
         .get("retry-after")
