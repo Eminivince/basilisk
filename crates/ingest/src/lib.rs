@@ -20,6 +20,7 @@
 pub mod error;
 pub mod ingester;
 pub mod normalize;
+pub mod solodit;
 pub mod state;
 
 pub use error::IngestError;
@@ -27,4 +28,5 @@ pub use ingester::{
     IngestOptions, IngestProgress, IngestRecord, IngestReport, Ingester, IngesterKind,
 };
 pub use normalize::{chunk_record, NormalizedRecord};
-pub use state::{default_state_path, IngestState};
+pub use solodit::{SoloditFindingRow, SoloditIngester};
+pub use state::{default_state_path, IngestState, SourceState};
