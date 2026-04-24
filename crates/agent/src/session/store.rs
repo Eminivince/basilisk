@@ -331,6 +331,31 @@ impl SessionStore {
         Ok(())
     }
 
+    /// Flip a session back to `running` ahead of a resume. The caller
+    /// (`AgentRunner::resume_with_observer`) uses this to undo the
+    /// `Interrupted` / `Failed` status that `mark_stopped` left on the
+    /// row, so subsequent `record_turn` calls pass the status guard.
+    ///
+    /// No-ops if the row is already `running`. Returns
+    /// [`SessionError::NotFound`] if the session doesn't exist.
+    pub fn mark_resumed(&self, session_id: &SessionId) -> Result<(), SessionError> {
+        let conn = self.lock()?;
+        let rows = conn.execute(
+            "UPDATE sessions
+             SET status = ?, stop_reason = NULL, updated_at_ms = ?
+             WHERE id = ?",
+            params![
+                SessionStatus::Running.as_str(),
+                to_millis(SystemTime::now()),
+                session_id.as_str(),
+            ],
+        )?;
+        if rows == 0 {
+            return Err(SessionError::NotFound(session_id.as_str().to_string()));
+        }
+        Ok(())
+    }
+
     // --- read + maintenance path (set-6 `CP4c`) --------------------------
 
     /// Reconstruct a full session transcript: the [`SessionRecord`]
@@ -615,17 +640,17 @@ impl std::fmt::Debug for SessionStore {
 
 /// Default path for the session database.
 ///
-/// Prefers `dirs::data_local_dir()/basilisk/sessions.db`; falls back to
-/// `./.basilisk-data/sessions.db` in the current directory when no
-/// system data dir is available. Does not create anything — callers
-/// are expected to `create_dir_all` the parent before calling
+/// Resolves to `~/.basilisk/sessions.db` (the spec's fixed location).
+/// Falls back to `./.basilisk/sessions.db` only when the home directory
+/// cannot be determined. Does not create anything — callers are
+/// expected to `create_dir_all` the parent before calling
 /// [`SessionStore::open`].
 #[must_use]
 pub fn default_db_path() -> PathBuf {
-    if let Some(dir) = dirs::data_local_dir() {
-        return dir.join("basilisk").join("sessions.db");
+    if let Some(home) = dirs::home_dir() {
+        return home.join(".basilisk").join("sessions.db");
     }
-    PathBuf::from(".basilisk-data").join("sessions.db")
+    PathBuf::from(".basilisk").join("sessions.db")
 }
 
 #[cfg(test)]

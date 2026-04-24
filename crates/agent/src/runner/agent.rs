@@ -105,6 +105,12 @@ impl AgentRunner {
         &self.store
     }
 
+    /// The system prompt this runner was built with. Exposed so the CLI
+    /// can recompute its hash when deciding whether a resume is safe.
+    pub fn system_prompt(&self) -> &str {
+        &self.system_prompt
+    }
+
     /// Build the [`ToolContext`] for one in-flight session. Called by
     /// the loop (`CP5c`); exposed `pub(crate)` so tests can drive it.
     pub(crate) fn build_context(&self, session_id: SessionId) -> ToolContext {
@@ -200,10 +206,6 @@ impl AgentRunner {
     /// The only failures that bubble up as [`AgentError`] are persistence
     /// failures the loop literally cannot recover from — every other
     /// stop is encoded in [`AgentOutcome::stop_reason`].
-    // The loop is long but linear; splitting it would force callers to
-    // chase the control flow across helpers without making any one
-    // piece independently meaningful.
-    #[allow(clippy::too_many_lines)]
     pub async fn run_with_observer(
         &self,
         target: impl Into<String>,
@@ -231,8 +233,6 @@ impl AgentRunner {
             "agent session started"
         );
 
-        let context = self.build_context(session_id.clone());
-
         // Seed history with the user's initial prompt + persist it.
         let initial_blocks = vec![ContentBlock::text(initial.clone())];
         let initial_started = SystemTime::now();
@@ -245,12 +245,80 @@ impl AgentRunner {
             initial_started,
             initial_started,
         )?;
-        let mut history: Vec<Message> = vec![Message {
+        let history: Vec<Message> = vec![Message {
             role: MessageRole::User,
             content: initial_blocks,
         }];
 
-        let mut stats = AgentStats::default();
+        self.drive_loop(
+            session_id,
+            target,
+            history,
+            AgentStats::default(),
+            started_inst,
+            started_at,
+            observer,
+        )
+        .await
+    }
+
+    /// Resume an interrupted session. `history` is the replayed
+    /// conversation as reconstructed from the persisted turn log; the
+    /// runner appends to it rather than seeding. The session row is
+    /// transitioned back to `running` before the first new turn so
+    /// `record_turn` passes its status guard.
+    ///
+    /// Stats start fresh — the resumed run's stats cover turns executed
+    /// on this resume only, which matches what operators want to see
+    /// from `--max-*` budgets on a resume invocation.
+    pub async fn resume_with_observer(
+        &self,
+        session_id: SessionId,
+        target: impl Into<String>,
+        history: Vec<Message>,
+        observer: &dyn AgentObserver,
+    ) -> Result<AgentOutcome, AgentError> {
+        let target = target.into();
+        let started_inst = Instant::now();
+        let started_at = SystemTime::now();
+
+        self.store.mark_resumed(&session_id)?;
+        observer.on_session_start(&session_id);
+        info!(
+            session = %session_id,
+            target = %target,
+            model = %self.backend.identifier(),
+            turns_replayed = history.len(),
+            "agent session resumed"
+        );
+
+        self.drive_loop(
+            session_id,
+            target,
+            history,
+            AgentStats::default(),
+            started_inst,
+            started_at,
+            observer,
+        )
+        .await
+    }
+
+    // The loop is long but linear; splitting it further would force
+    // callers to chase the control flow across helpers without making
+    // any one piece independently meaningful.
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+    async fn drive_loop(
+        &self,
+        session_id: SessionId,
+        _target: String,
+        mut history: Vec<Message>,
+        mut stats: AgentStats,
+        started_inst: Instant,
+        started_at: SystemTime,
+        observer: &dyn AgentObserver,
+    ) -> Result<AgentOutcome, AgentError> {
+        let context = self.build_context(session_id.clone());
         let mut final_report: Option<FinalReport> = None;
         let stop_reason: AgentStopReason = loop {
             if let Some(reason) = self.budget_check_at(&stats, started_inst) {

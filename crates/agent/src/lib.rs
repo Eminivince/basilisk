@@ -13,12 +13,14 @@
 //!  - **`CP5`**: the tool-use loop itself + budget enforcement.
 //!  - **CP6+**: CLI wiring, system prompts, live tests.
 
+pub mod prompts;
 pub mod runner;
 pub mod session;
 pub mod testing;
 pub mod tool;
 pub mod tools;
 
+pub use prompts::RECON_V1_PROMPT;
 pub use runner::{
     AgentError, AgentObserver, AgentOutcome, AgentRunner, AgentStats, AgentStopReason, Budget,
     NoopObserver,

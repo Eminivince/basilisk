@@ -7,7 +7,7 @@ use basilisk_core::Config;
 use basilisk_logging::LogFormat;
 use clap::{Parser, Subcommand};
 
-use crate::commands::{agent::AgentArgs, cache::CacheArgs, recon::ReconArgs};
+use crate::commands::{cache::CacheArgs, recon::ReconArgs, session::SessionCmd};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -32,10 +32,13 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Classify a target (GitHub repo, on-chain address, local path) and, for
-    /// on-chain targets, fetch bytecode + verified source + proxy info.
+    /// on-chain targets, fetch bytecode + verified source + proxy info. Pass
+    /// `--agent` to hand the target to the LLM-driven auditor instead of the
+    /// deterministic pipeline.
     Recon(ReconArgs),
-    /// Run the LLM-driven auditor agent against a target.
-    Agent(AgentArgs),
+    /// Inspect, resume, and delete agent sessions persisted on disk.
+    #[command(subcommand)]
+    Session(SessionCmd),
     /// Inspect and manage Basilisk's on-disk cache.
     Cache(CacheArgs),
 }
@@ -58,7 +61,7 @@ async fn main() -> Result<()> {
 
     match &cli.command {
         Command::Recon(args) => commands::recon::run(args, &config).await,
-        Command::Agent(args) => commands::agent::run(args, &config).await,
+        Command::Session(cmd) => commands::session::run(cmd, &config).await,
         Command::Cache(args) => commands::cache::run(args).await,
     }
 }

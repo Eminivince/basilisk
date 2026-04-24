@@ -20,6 +20,8 @@ use basilisk_onchain::{ExpansionLimits, OnchainIngester};
 use basilisk_project::{resolve_project, ResolvedProject};
 use clap::{Args, ValueEnum};
 
+use crate::commands::agent_runner::{self, AgentFlags};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum OutputFormat {
     /// Human-readable multi-line summary (default).
@@ -95,6 +97,19 @@ pub struct ReconArgs {
     /// Write the contract graph as `GraphViz` DOT to this path.
     #[arg(long)]
     pub dot: Option<PathBuf>,
+
+    // ---- agent-driven path ----
+    /// Route through the LLM-driven auditor instead of the deterministic
+    /// ingestion pipeline. Requires `ANTHROPIC_API_KEY`. All `--max-*`,
+    /// `--model`, `--session-note`, `--db`, `--system-prompt`,
+    /// `--agent-output`, and `--no-stream` flags only take effect when
+    /// this is set. The deterministic dispatch remains the default so
+    /// scripted recon still produces byte-identical output.
+    #[arg(long)]
+    pub agent: bool,
+
+    #[command(flatten)]
+    pub agent_flags: AgentFlags,
 }
 
 fn parse_chain_arg(s: &str) -> std::result::Result<Chain, String> {
@@ -102,6 +117,10 @@ fn parse_chain_arg(s: &str) -> std::result::Result<Chain, String> {
 }
 
 pub async fn run(args: &ReconArgs, config: &Config) -> Result<()> {
+    if args.agent {
+        return agent_runner::run_agent(&args.target, &args.agent_flags, config).await;
+    }
+
     let target = detect(&args.target, args.chain.clone());
 
     match &target {
