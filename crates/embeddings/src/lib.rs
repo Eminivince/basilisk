@@ -32,13 +32,22 @@
 //! [`basilisk-llm`]: https://docs.rs/basilisk-llm
 
 pub mod backend;
+pub mod batching;
 pub mod error;
+pub mod factory;
+pub mod openai_compat;
 pub mod pricing;
 pub mod types;
 pub mod voyage;
 
 pub use backend::EmbeddingProvider;
+pub use batching::{BatchingProvider, RetryConfig, TokenBudgetGate};
 pub use error::EmbeddingError;
+pub use factory::{build_provider, ProviderKind, ProviderSelection};
+pub use openai_compat::{
+    OpenAICompatibleEmbeddingBackend, Provider, OLLAMA_BASE, OLLAMA_DEFAULT_MODEL, OPENAI_BASE,
+    OPENAI_DEFAULT_MODEL,
+};
 pub use pricing::{EmbeddingPricing, EmbeddingPricingSource, EmbeddingPricingTable};
 pub use types::{Embedding, EmbeddingInput, InputKind};
 pub use voyage::{VoyageBackend, VOYAGE_DEFAULT_MODEL};
