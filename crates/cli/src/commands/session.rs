@@ -8,8 +8,8 @@
 //!  - [`SessionCmd::Resume`] — continue an interrupted session. The
 //!    system prompt must match what the session started with
 //!    (sha-256 hash); pass `--force-prompt-change` to override.
-//!  - [`SessionCmd::Delete`] — remove a session row from SQLite
-//!    (cascades to turns + tool_calls). Prompts for confirmation
+//!  - [`SessionCmd::Delete`] — remove a session row from `SQLite`
+//!    (cascades to `turns` + `tool_calls`). Prompts for confirmation
 //!    unless `--yes` is set.
 
 use std::io::{self, Read, Write};
@@ -122,9 +122,7 @@ pub async fn run(cmd: &SessionCmd, config: &Config) -> Result<()> {
 }
 
 fn resolve_db(db: Option<&std::path::Path>) -> Result<SessionStore> {
-    let path = db
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(default_db_path);
+    let path = db.map_or_else(default_db_path, std::path::Path::to_path_buf);
     SessionStore::open(&path).with_context(|| format!("opening session DB at {}", path.display()))
 }
 
@@ -259,7 +257,10 @@ fn print_block(block: &serde_json::Value) {
     ) {
         println!("  tool_use: {name}({})", compact_json(input));
     } else if let Some(content) = obj.get("content").and_then(|v| v.as_str()) {
-        let is_err = obj.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
+        let is_err = obj
+            .get("is_error")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         let tag = if is_err { "tool_result ERR" } else { "tool_result" };
         println!("  {tag}: {}", truncate_multiline(content, 300));
     } else {
@@ -346,8 +347,7 @@ fn format_time(ts: std::time::SystemTime) -> String {
     // fine for a listing — operators can copy the id into `show` for
     // full detail.
     ts.duration_since(std::time::UNIX_EPOCH)
-        .map(|d| format!("{}", d.as_secs()))
-        .unwrap_or_else(|_| "0".into())
+        .map_or_else(|_| "0".into(), |d| format!("{}", d.as_secs()))
 }
 
 #[cfg(test)]
