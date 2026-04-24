@@ -20,6 +20,7 @@ basilisk-explorers = { path = "crates/explorers", version = "0.1.0" }
 basilisk-git = { path = "crates/git", version = "0.1.0" }
 basilisk-github = { path = "crates/github", version = "0.1.0" }
 basilisk-graph = { path = "crates/graph", version = "0.1.0" }
+basilisk-ingest = { path = "crates/ingest", version = "0.1.0" }
 basilisk-llm = { path = "crates/llm", version = "0.1.0" }
 basilisk-logging = { path = "crates/logging", version = "0.1.0" }
 basilisk-onchain = { path = "crates/onchain", version = "0.1.0" }

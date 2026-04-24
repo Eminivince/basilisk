@@ -872,10 +872,12 @@ dependencies = [
  "basilisk-core",
  "basilisk-git",
  "basilisk-github",
+ "basilisk-ingest",
  "basilisk-llm",
  "basilisk-logging",
  "basilisk-onchain",
  "basilisk-project",
+ "basilisk-vector",
  "clap",
  "dotenvy",
  "hex",
@@ -977,6 +979,24 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "serde",
+]
+
+[[package]]
+name = "basilisk-ingest"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "basilisk-embeddings",
+ "basilisk-vector",
+ "dirs",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

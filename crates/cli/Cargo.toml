@@ -21,10 +21,12 @@ basilisk-cache = { workspace = true }
 basilisk-core = { workspace = true }
 basilisk-git = { workspace = true }
 basilisk-github = { workspace = true }
+basilisk-ingest = { workspace = true }
 basilisk-llm = { workspace = true }
 basilisk-logging = { workspace = true }
 basilisk-onchain = { workspace = true }
 basilisk-project = { workspace = true }
+basilisk-vector = { workspace = true }
 
 alloy-primitives = { workspace = true }
 anyhow = { workspace = true }

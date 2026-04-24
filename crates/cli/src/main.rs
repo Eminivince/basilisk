@@ -7,7 +7,9 @@ use basilisk_core::Config;
 use basilisk_logging::LogFormat;
 use clap::{Parser, Subcommand};
 
-use crate::commands::{cache::CacheArgs, recon::ReconArgs, session::SessionCmd};
+use crate::commands::{
+    cache::CacheArgs, knowledge::KnowledgeCmd, recon::ReconArgs, session::SessionCmd,
+};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -39,6 +41,10 @@ enum Command {
     /// Inspect, resume, and delete agent sessions persisted on disk.
     #[command(subcommand)]
     Session(SessionCmd),
+    /// Manage the knowledge base — ingest corpora, search findings,
+    /// add protocol docs, correct / dismiss / confirm entries.
+    #[command(subcommand)]
+    Knowledge(KnowledgeCmd),
     /// Inspect and manage Basilisk's on-disk cache.
     Cache(CacheArgs),
 }
@@ -68,6 +74,7 @@ async fn main() -> Result<()> {
     match &cli.command {
         Command::Recon(args) => commands::recon::run(args, &config).await,
         Command::Session(cmd) => commands::session::run(cmd, &config).await,
+        Command::Knowledge(cmd) => commands::knowledge::run(cmd, &config).await,
         Command::Cache(args) => commands::cache::run(args).await,
     }
 }
