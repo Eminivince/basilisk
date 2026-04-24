@@ -320,6 +320,14 @@ impl AgentRunner {
     ) -> Result<AgentOutcome, AgentError> {
         let context = self.build_context(session_id.clone());
         let mut final_report: Option<FinalReport> = None;
+        // One-shot nudge: if the model ends a turn with text and no
+        // tool call, we inject a user message reminding it to call
+        // `finalize_report` and give it one more turn. If it still
+        // text-ends after that, we surrender. This traded prompt
+        // iteration against real non-determinism observed in live
+        // runs (see `fix: prompt: strengthen recon_v1` + the CP6h
+        // runs against USDC / Aave V3).
+        let mut nudged_for_missing_tool_call = false;
         let stop_reason: AgentStopReason = loop {
             if let Some(reason) = self.budget_check_at(&stats, started_inst) {
                 debug!(?reason, "budget tripped");
@@ -446,13 +454,43 @@ impl AgentRunner {
                 break AgentStopReason::ReportFinalized;
             }
 
-            // No tool calls means the model ended its turn without doing
-            // anything actionable. The loop has nothing to feed back; stop
-            // and let the caller decide what to do.
+            // No tool calls means the model ended its turn with text
+            // only. Send one nudge reminding it to call a tool (usually
+            // `finalize_report`); if the next turn STILL text-ends,
+            // we give up. Prevents the classic "model writes the brief
+            // as prose and stops" failure mode observed across live
+            // runs while capping recovery cost at one extra turn.
             if tool_results.is_empty() {
-                break AgentStopReason::LlmError {
-                    message: "model ended turn without calling a tool or finalize_report".into(),
-                };
+                if nudged_for_missing_tool_call {
+                    break AgentStopReason::LlmError {
+                        message: "model ended turn without calling a tool or finalize_report \
+                                  (even after a nudge — giving up to avoid budget waste)"
+                            .into(),
+                    };
+                }
+                nudged_for_missing_tool_call = true;
+                let nudge = "Your previous turn ended with assistant text but no tool call. \
+                             Text that isn't inside a `finalize_report` tool call is discarded \
+                             — the operator will see nothing. If you meant that to be your final \
+                             brief, call `finalize_report` now with the markdown as the \
+                             `markdown` argument. Otherwise, make another tool call to continue \
+                             investigation.";
+                let nudge_blocks = vec![ContentBlock::text(nudge)];
+                let at = SystemTime::now();
+                self.store.record_turn(
+                    &session_id,
+                    TurnRole::User,
+                    &serde_json::to_value(&nudge_blocks)?,
+                    None,
+                    None,
+                    at,
+                    at,
+                )?;
+                history.push(Message {
+                    role: MessageRole::User,
+                    content: nudge_blocks,
+                });
+                continue;
             }
 
             let tr_at = SystemTime::now();

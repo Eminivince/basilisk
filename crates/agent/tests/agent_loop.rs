@@ -391,13 +391,21 @@ async fn zero_turn_budget_records_only_seed_turn() {
 }
 
 #[tokio::test]
-async fn end_turn_without_tool_call_is_surfaced_as_llm_error() {
+async fn two_consecutive_text_only_turns_give_up_after_nudge() {
+    // The runner nudges once when a turn text-ends; if the next turn
+    // also text-ends, it surrenders. Two text-only responses queued
+    // here exercise that path.
     let backend = Arc::new(MockLlmBackend::new("claude-opus-4-7"));
-    // No tool_use, just text → agent "gives up" mid-audit.
     backend.push(
         MockResponse::new()
             .text("I'm not sure what to do here.")
             .usage(30, 10)
+            .build(),
+    );
+    backend.push(
+        MockResponse::new()
+            .text("Still not sure, sorry.")
+            .usage(20, 8)
             .build(),
     );
 
@@ -407,15 +415,57 @@ async fn end_turn_without_tool_call_is_surfaced_as_llm_error() {
     match outcome.stop_reason {
         AgentStopReason::LlmError { ref message } => {
             assert!(
-                message.contains("without calling a tool"),
-                "got {message:?}"
+                message.contains("even after a nudge"),
+                "expected the post-nudge surrender message, got {message:?}",
             );
         }
         other => panic!("got {other:?}"),
     }
-    assert_eq!(outcome.stats.turns, 1);
+    assert_eq!(outcome.stats.turns, 2, "nudge burns one extra turn");
     assert_eq!(outcome.stats.tool_calls, 0);
     assert!(outcome.final_report.is_none());
+
+    // The persisted transcript must include the nudge turn so
+    // `audit session show` tells the truth about what went on the
+    // wire. Expected turn count: seed user + turn-1 assistant +
+    // nudge user + turn-2 assistant = 4.
+    let snap = runner.store().load_session(&outcome.session_id).unwrap();
+    assert_eq!(snap.turns.len(), 4);
+    // The nudge turn is the third row (index 2) and must be user-role
+    // carrying a reminder about `finalize_report`.
+    assert_eq!(snap.turns[2].role, TurnRole::User);
+    let nudge_content = snap.turns[2].content.to_string();
+    assert!(
+        nudge_content.contains("finalize_report"),
+        "nudge turn should reference finalize_report; got {nudge_content}",
+    );
+}
+
+#[tokio::test]
+async fn text_only_turn_followed_by_tool_call_recovers_via_nudge() {
+    // Model text-ends on turn 1, receives the nudge, and recovers by
+    // calling finalize_report on turn 2. Exercises the recovery path
+    // and proves a successful session can include one nudged turn.
+    let backend = Arc::new(MockLlmBackend::new("claude-opus-4-7"));
+    backend.push(
+        MockResponse::new()
+            .text("Here's my brief: ...")
+            .usage(80, 20)
+            .build(),
+    );
+    backend.push(
+        MockResponse::new()
+            .finalize("tu_f", "# brief\nok", Confidence::Medium, None)
+            .usage(30, 10)
+            .build(),
+    );
+
+    let (runner, _dir) = make_runner(backend, Budget::default());
+    let outcome = runner.run("eth/0x", "go", None).await.unwrap();
+
+    assert_eq!(outcome.stop_reason, AgentStopReason::ReportFinalized);
+    assert_eq!(outcome.stats.turns, 2);
+    assert!(outcome.final_report.is_some());
 }
 
 #[tokio::test]
