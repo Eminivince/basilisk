@@ -27,6 +27,7 @@ basilisk-logging = { path = "crates/logging", version = "0.1.0" }
 basilisk-onchain = { path = "crates/onchain", version = "0.1.0" }
 basilisk-project = { path = "crates/project", version = "0.1.0" }
 basilisk-rpc = { path = "crates/rpc", version = "0.1.0" }
+basilisk-scratchpad = { path = "crates/scratchpad", version = "0.1.0" }
 basilisk-vector = { path = "crates/vector", version = "0.1.0" }
 
 # External

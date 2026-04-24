@@ -1145,6 +1145,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "basilisk-scratchpad"
+version = "0.1.0"
+dependencies = [
+ "basilisk-core",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "basilisk-vector"
 version = "0.1.0"
 dependencies = [
