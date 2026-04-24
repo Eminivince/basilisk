@@ -13,10 +13,12 @@
 //!  - **`CP5`**: the tool-use loop itself + budget enforcement.
 //!  - **CP6+**: CLI wiring, system prompts, live tests.
 
+pub mod runner;
 pub mod session;
 pub mod tool;
 pub mod tools;
 
+pub use runner::{AgentError, AgentOutcome, AgentStats, AgentStopReason, Budget};
 pub use session::{
     LoadedSession, SessionError, SessionRecord, SessionStatus, SessionStore, SessionSummary,
     ToolCallRecord, TurnRecord, TurnRole,
