@@ -27,7 +27,7 @@ pub use anthropic::{AnthropicBackend, DEFAULT_MODEL};
 pub use backend::{collect_stream, LlmBackend};
 pub use error::LlmError;
 pub use openai_compat::{OpenAICompatibleBackend, Provider};
-pub use pricing::{ModelPricing, PricingTable};
+pub use pricing::{ModelPricing, ModelPricingSource, PricingTable};
 pub use types::{
     BlockType, CompletionRequest, CompletionResponse, CompletionStream, ContentBlock, Delta,
     Message, MessageRole, StopReason, StreamEvent, TokenUsage, ToolChoice, ToolDefinition,

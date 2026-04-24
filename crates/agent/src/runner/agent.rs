@@ -18,7 +18,8 @@ use basilisk_git::RepoCache;
 use basilisk_github::GithubClient;
 use basilisk_llm::{
     BlockType, CompletionRequest, CompletionResponse, ContentBlock, Delta, LlmBackend, LlmError,
-    Message, MessageRole, PricingTable, StopReason, StreamEvent, TokenUsage, ToolChoice,
+    Message, MessageRole, ModelPricingSource, PricingTable, StopReason, StreamEvent, TokenUsage,
+    ToolChoice,
 };
 use futures::StreamExt;
 use sha2::{Digest, Sha256};
@@ -123,11 +124,32 @@ impl AgentRunner {
     }
 
     /// Estimate the cost in cents for one batch of token usage. Looks
-    /// up [`PricingTable`] by the backend's identifier; if the model is
-    /// unknown, returns `0` and the cost cap is effectively disabled
-    /// for the run.
+    /// up [`PricingTable`] by the backend's identifier; if the model
+    /// is unknown, returns `0` — the cost cap is effectively disabled
+    /// for that run. A one-shot warning is logged at session start
+    /// (see [`warn_on_unknown_pricing`]) so operators aren't caught
+    /// off-guard.
     pub(crate) fn estimate_cost_cents(&self, usage: &TokenUsage) -> u32 {
-        PricingTable::for_model(self.backend.identifier()).map_or(0, |p| p.cost_cents(usage))
+        let (pricing, _) = PricingTable::for_model(self.backend.identifier());
+        pricing.cost_cents(usage)
+    }
+
+    /// Emit a one-shot `tracing::warn!` when the agent's model has no
+    /// pricing data. Called once at the top of [`drive_loop`] so the
+    /// warning lands before any tokens are spent. Returns the source
+    /// so callers can branch if they ever want to (current behaviour:
+    /// run with cost enforcement disabled).
+    fn warn_on_unknown_pricing(&self) -> ModelPricingSource {
+        let (_, source) = PricingTable::for_model(self.backend.identifier());
+        if source == ModelPricingSource::Unknown {
+            warn!(
+                model = %self.backend.identifier(),
+                "no pricing data for this model — cost enforcement is disabled for \
+                 this session. Set `--max-tokens` / BASILISK_MAX_TOKENS to bound spend, \
+                 or add a pricing entry to crates/llm/src/pricing.rs.",
+            );
+        }
+        source
     }
 
     /// Check the four budget caps in priority order. Returns the first
@@ -319,6 +341,10 @@ impl AgentRunner {
         observer: &dyn AgentObserver,
     ) -> Result<AgentOutcome, AgentError> {
         let context = self.build_context(session_id.clone());
+        // One-shot pricing diagnostic — warns when cost enforcement is
+        // silently disabled. Fires at session start so operators see
+        // it before any tokens are spent.
+        self.warn_on_unknown_pricing();
         let mut final_report: Option<FinalReport> = None;
         // Consecutive-text-end guard. When the model text-ends, we
         // inject a nudge user message and flip `tool_choice` to `Any`
@@ -809,7 +835,7 @@ mod tests {
 
     #[test]
     fn cost_estimate_returns_zero_for_unknown_model() {
-        let runner = build_runner("custom/local-llama", Budget::default());
+        let runner = build_runner("custom/totally-unknown-model", Budget::default());
         let usage = TokenUsage {
             input_tokens: 1_000_000,
             output_tokens: 1_000_000,
@@ -817,6 +843,59 @@ mod tests {
             cache_creation_input_tokens: None,
         };
         assert_eq!(runner.estimate_cost_cents(&usage), 0);
+    }
+
+    #[test]
+    fn warn_on_unknown_pricing_returns_source_and_doesnt_panic() {
+        // Known model — source is Known, no warning expected.
+        let known = build_runner("claude-opus-4-7", Budget::default());
+        assert_eq!(known.warn_on_unknown_pricing(), ModelPricingSource::Known);
+
+        // OpenRouter-prefixed form — resolves via prefix stripping.
+        let via_or = build_runner("openrouter/anthropic/claude-opus-4-7", Budget::default());
+        assert_eq!(
+            via_or.warn_on_unknown_pricing(),
+            ModelPricingSource::ProviderPrefix,
+        );
+
+        // Ollama — known (free), not unknown.
+        let local = build_runner("ollama/llama3.1:70b", Budget::default());
+        assert_eq!(local.warn_on_unknown_pricing(), ModelPricingSource::Known);
+
+        // Truly unknown — warning fires (trace-only; we just assert
+        // the source is Unknown and the call is infallible).
+        let unknown = build_runner("some-unknown-model-v99", Budget::default());
+        assert_eq!(
+            unknown.warn_on_unknown_pricing(),
+            ModelPricingSource::Unknown,
+        );
+    }
+
+    #[test]
+    fn cost_estimate_uses_openrouter_prefix_routing() {
+        // `openrouter/anthropic/...` should price the same as native
+        // Anthropic for that model.
+        let runner = build_runner("openrouter/anthropic/claude-opus-4-7", Budget::default());
+        let usage = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 0,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
+        };
+        assert_eq!(runner.estimate_cost_cents(&usage), 1500);
+    }
+
+    #[test]
+    fn cost_estimate_reports_zero_for_explicit_local_providers() {
+        let runner = build_runner("ollama/llama3.1:70b", Budget::default());
+        let huge_usage = TokenUsage {
+            input_tokens: 10_000_000,
+            output_tokens: 5_000_000,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
+        };
+        // Explicit free > unknown: the source is Known, not Unknown.
+        assert_eq!(runner.estimate_cost_cents(&huge_usage), 0);
     }
 
     #[test]
