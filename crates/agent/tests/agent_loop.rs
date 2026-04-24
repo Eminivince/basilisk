@@ -460,12 +460,28 @@ async fn text_only_turn_followed_by_tool_call_recovers_via_nudge() {
             .build(),
     );
 
-    let (runner, _dir) = make_runner(backend, Budget::default());
+    let (runner, _dir) = make_runner(backend.clone(), Budget::default());
     let outcome = runner.run("eth/0x", "go", None).await.unwrap();
 
     assert_eq!(outcome.stop_reason, AgentStopReason::ReportFinalized);
     assert_eq!(outcome.stats.turns, 2);
     assert!(outcome.final_report.is_some());
+
+    // Hard-rails guard: turn 1 goes out with `Auto` (model's choice);
+    // turn 2 — the post-nudge turn — must go out with `Any` so the
+    // provider rejects another text-only completion.
+    let choices = backend.tool_choices();
+    assert_eq!(choices.len(), 2, "two turns, two captured requests");
+    assert!(
+        matches!(choices[0], basilisk_llm::ToolChoice::Auto),
+        "first turn should use Auto, got {:?}",
+        choices[0],
+    );
+    assert!(
+        matches!(choices[1], basilisk_llm::ToolChoice::Any),
+        "post-nudge turn should use Any, got {:?}",
+        choices[1],
+    );
 }
 
 #[tokio::test]

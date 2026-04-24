@@ -322,12 +322,15 @@ impl AgentRunner {
         let mut final_report: Option<FinalReport> = None;
         // One-shot nudge: if the model ends a turn with text and no
         // tool call, we inject a user message reminding it to call
-        // `finalize_report` and give it one more turn. If it still
-        // text-ends after that, we surrender. This traded prompt
-        // iteration against real non-determinism observed in live
-        // runs (see `fix: prompt: strengthen recon_v1` + the CP6h
-        // runs against USDC / Aave V3).
+        // `finalize_report` AND flip `tool_choice` to `Any` on the
+        // next request — that's a provider-level constraint, so the
+        // model cannot text-end again. If it *still* errors out (e.g.
+        // invalid tool input), we surrender. The soft prompt nudge
+        // plus the hard tool_choice constraint together close the
+        // gap that pure prompt mitigation could not (see live runs
+        // #4 and #5 against USDC / Aave V3).
         let mut nudged_for_missing_tool_call = false;
+        let mut force_tool_choice: Option<ToolChoice> = None;
         let stop_reason: AgentStopReason = loop {
             if let Some(reason) = self.budget_check_at(&stats, started_inst) {
                 debug!(?reason, "budget tripped");
@@ -340,7 +343,12 @@ impl AgentRunner {
                 tools: self.registry.definitions(),
                 max_tokens: MAX_TOKENS_PER_TURN,
                 temperature: None,
-                tool_choice: ToolChoice::default(),
+                // `force_tool_choice` is set only on the turn right
+                // after a nudge, flipping the request to `Any` so the
+                // provider rejects any text-only completion. It's
+                // consumed after one use so subsequent turns go back
+                // to `Auto`.
+                tool_choice: force_tool_choice.take().unwrap_or_default(),
                 stop_sequences: Vec::new(),
                 cache_system_prompt: true,
             };
@@ -469,6 +477,11 @@ impl AgentRunner {
                     };
                 }
                 nudged_for_missing_tool_call = true;
+                // Hard rails: force the model to emit a tool call on
+                // the next turn. `Any` lets it pick between
+                // `finalize_report` and another investigation tool —
+                // just not text-only again.
+                force_tool_choice = Some(ToolChoice::Any);
                 let nudge = "Your previous turn ended with assistant text but no tool call. \
                              Text that isn't inside a `finalize_report` tool call is discarded \
                              — the operator will see nothing. If you meant that to be your final \

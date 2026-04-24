@@ -52,6 +52,10 @@ use crate::Budget;
 pub struct MockLlmBackend {
     id: String,
     queue: Mutex<VecDeque<Result<CompletionResponse, LlmError>>>,
+    /// Captured `tool_choice` from each incoming request. Tests that
+    /// want to assert on how the runner is steering the model (e.g.
+    /// the post-nudge `tool_choice: Any` guard) read this list.
+    captured_tool_choices: Mutex<Vec<basilisk_llm::ToolChoice>>,
 }
 
 impl MockLlmBackend {
@@ -61,7 +65,15 @@ impl MockLlmBackend {
         Self {
             id: model.into(),
             queue: Mutex::new(VecDeque::new()),
+            captured_tool_choices: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Snapshot of every `tool_choice` the runner sent, one per call.
+    /// The post-nudge turn should show `Any`; every other call is the
+    /// default `Auto`.
+    pub fn tool_choices(&self) -> Vec<basilisk_llm::ToolChoice> {
+        self.captured_tool_choices.lock().unwrap().clone()
     }
 
     /// Shortcut: seed with every response at once.
@@ -101,7 +113,11 @@ impl LlmBackend for MockLlmBackend {
         &self.id
     }
 
-    async fn complete(&self, _request: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+    async fn complete(&self, request: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+        self.captured_tool_choices
+            .lock()
+            .unwrap()
+            .push(request.tool_choice);
         self.queue
             .lock()
             .unwrap()
@@ -109,7 +125,11 @@ impl LlmBackend for MockLlmBackend {
             .unwrap_or_else(|| Err(LlmError::Other("mock backend exhausted".into())))
     }
 
-    async fn stream(&self, _request: CompletionRequest) -> Result<CompletionStream, LlmError> {
+    async fn stream(&self, request: CompletionRequest) -> Result<CompletionStream, LlmError> {
+        self.captured_tool_choices
+            .lock()
+            .unwrap()
+            .push(request.tool_choice);
         let next = self
             .queue
             .lock()
