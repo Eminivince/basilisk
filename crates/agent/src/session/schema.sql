@@ -9,7 +9,8 @@
 -- Timestamps are stored as integer milliseconds since the Unix epoch.
 -- Booleans are stored as INTEGER 0/1 — SQLite's native representation.
 
-PRAGMA user_version = 1;
+-- `SessionStore::apply_schema` sets PRAGMA user_version to
+-- [`store::SCHEMA_VERSION`] *after* this file runs; don't set it here.
 
 CREATE TABLE IF NOT EXISTS sessions (
     id                    TEXT    PRIMARY KEY,
@@ -22,6 +23,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     stop_reason           TEXT,
     final_report_markdown TEXT,
     final_confidence      TEXT,
+    -- Optional human-reviewer notes from `finalize_report`; lives here,
+    -- separate from the session-level `note` column which carries the
+    -- user's `--session-note` flag.
+    final_report_notes    TEXT,
     note                  TEXT,
     stats_json            TEXT    NOT NULL
 );
