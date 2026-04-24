@@ -223,7 +223,10 @@ fn render_pretty(loaded: &LoadedSession) {
     }
 
     if let Some(md) = &s.final_report_markdown {
-        println!("── final report ({}) ──", s.final_confidence.as_deref().unwrap_or("?"));
+        println!(
+            "── final report ({}) ──",
+            s.final_confidence.as_deref().unwrap_or("?")
+        );
         println!("{md}");
     }
 }
@@ -251,17 +254,20 @@ fn print_block(block: &serde_json::Value) {
     // by the LLM crate. Don't assume shape — print what we can.
     if let Some(text) = obj.get("text").and_then(|v| v.as_str()) {
         println!("  text: {}", truncate_multiline(text, 500));
-    } else if let (Some(name), Some(input)) = (
-        obj.get("name").and_then(|v| v.as_str()),
-        obj.get("input"),
-    ) {
+    } else if let (Some(name), Some(input)) =
+        (obj.get("name").and_then(|v| v.as_str()), obj.get("input"))
+    {
         println!("  tool_use: {name}({})", compact_json(input));
     } else if let Some(content) = obj.get("content").and_then(|v| v.as_str()) {
         let is_err = obj
             .get("is_error")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
-        let tag = if is_err { "tool_result ERR" } else { "tool_result" };
+        let tag = if is_err {
+            "tool_result ERR"
+        } else {
+            "tool_result"
+        };
         println!("  {tag}: {}", truncate_multiline(content, 300));
     } else {
         println!("  {block}");

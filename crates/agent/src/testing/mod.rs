@@ -176,8 +176,7 @@ pub fn completion_response_to_events(response: CompletionResponse) -> Vec<Stream
                 // Real providers stream the input as many JSON
                 // fragments; emitting it as one chunk is indistinguishable
                 // downstream since the runner concatenates before parsing.
-                let json = serde_json::to_string(&input)
-                    .unwrap_or_else(|_| "{}".to_string());
+                let json = serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string());
                 events.push(StreamEvent::ContentBlockDelta {
                     index,
                     delta: Delta::InputJsonDelta(json),

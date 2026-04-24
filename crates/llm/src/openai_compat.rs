@@ -226,7 +226,11 @@ impl LlmBackend for OpenAICompatibleBackend {
     async fn complete(&self, request: CompletionRequest) -> Result<CompletionResponse, LlmError> {
         let body = build_request_body(&self.inner.model, &request, false);
         let url = format!("{}/chat/completions", self.inner.base);
-        let mut builder = self.inner.client.post(&url).header("content-type", "application/json");
+        let mut builder = self
+            .inner
+            .client
+            .post(&url)
+            .header("content-type", "application/json");
         builder = self.apply_auth(builder);
         let response = builder
             .json(&body)
@@ -432,8 +436,8 @@ fn append_message_to_wire(m: &Message, out: &mut Vec<WireMessage>) {
                 match block {
                     ContentBlock::Text { text } => text_parts.push(text.clone()),
                     ContentBlock::ToolUse { id, name, input } => {
-                        let arguments = serde_json::to_string(input)
-                            .unwrap_or_else(|_| "{}".to_string());
+                        let arguments =
+                            serde_json::to_string(input).unwrap_or_else(|_| "{}".to_string());
                         tool_calls.push(WireToolCall {
                             id: id.clone(),
                             kind: "function",
@@ -542,9 +546,8 @@ fn parse_response(wire: WireResponse) -> Result<CompletionResponse, LlmError> {
         let input: serde_json::Value = if tc.function.arguments.is_empty() {
             serde_json::json!({})
         } else {
-            serde_json::from_str(&tc.function.arguments).map_err(|e| {
-                LlmError::ParseError(format!("tool_call arguments JSON: {e}"))
-            })?
+            serde_json::from_str(&tc.function.arguments)
+                .map_err(|e| LlmError::ParseError(format!("tool_call arguments JSON: {e}")))?
         };
         content.push(ContentBlock::ToolUse {
             id: tc.id,
@@ -753,7 +756,10 @@ fn handle_frame(
     }
 
     if let Some(usage) = value.get("usage") {
-        if let Some(prompt) = usage.get("prompt_tokens").and_then(serde_json::Value::as_u64) {
+        if let Some(prompt) = usage
+            .get("prompt_tokens")
+            .and_then(serde_json::Value::as_u64)
+        {
             acc.usage.input_tokens = u32::try_from(prompt).unwrap_or(u32::MAX);
         }
         if let Some(comp) = usage
@@ -816,7 +822,10 @@ fn handle_delta(
     // OpenAI's `tool_calls` array), optionally id/type/function.name
     // on first appearance, and function.arguments streamed as string
     // fragments.
-    if let Some(tool_calls) = delta.get("tool_calls").and_then(serde_json::Value::as_array) {
+    if let Some(tool_calls) = delta
+        .get("tool_calls")
+        .and_then(serde_json::Value::as_array)
+    {
         for tc in tool_calls {
             let Some(tool_idx) = tc.get("index").and_then(serde_json::Value::as_u64) else {
                 continue;
@@ -834,10 +843,7 @@ fn handle_delta(
                     },
                 );
             }
-            let state = acc
-                .tool_blocks
-                .get_mut(&tool_idx)
-                .expect("just inserted");
+            let state = acc.tool_blocks.get_mut(&tool_idx).expect("just inserted");
 
             if let Some(id) = tc.get("id").and_then(serde_json::Value::as_str) {
                 state.id.get_or_insert_with(|| id.to_string());
@@ -975,23 +981,16 @@ mod tests {
 
     #[test]
     fn ollama_allows_empty_api_key_for_local_use() {
-        let b = OpenAICompatibleBackend::with_provider_and_model(
-            Provider::Ollama,
-            "",
-            "llama3.1",
-        )
-        .expect("ollama backend builds without a key");
+        let b = OpenAICompatibleBackend::with_provider_and_model(Provider::Ollama, "", "llama3.1")
+            .expect("ollama backend builds without a key");
         assert_eq!(b.identifier(), "ollama/llama3.1");
     }
 
     #[test]
     fn custom_provider_requires_explicit_base_url() {
-        let err = OpenAICompatibleBackend::with_provider_and_model(
-            Provider::Custom,
-            "key",
-            "model",
-        )
-        .unwrap_err();
+        let err =
+            OpenAICompatibleBackend::with_provider_and_model(Provider::Custom, "key", "model")
+                .unwrap_err();
         assert!(matches!(err, LlmError::Other(_)));
     }
 
@@ -1005,12 +1004,9 @@ mod tests {
         .unwrap();
         assert_eq!(o.identifier(), "openrouter/anthropic/claude-opus-4-7");
 
-        let l = OpenAICompatibleBackend::with_provider_and_model(
-            Provider::Ollama,
-            "",
-            "llama3.1:70b",
-        )
-        .unwrap();
+        let l =
+            OpenAICompatibleBackend::with_provider_and_model(Provider::Ollama, "", "llama3.1:70b")
+                .unwrap();
         assert_eq!(l.identifier(), "ollama/llama3.1:70b");
     }
 
@@ -1041,8 +1037,7 @@ mod tests {
         assert_eq!(tools[0]["type"], "function");
         assert_eq!(tools[0]["function"]["name"], "classify_target");
         assert_eq!(
-            tools[0]["function"]["parameters"]["type"],
-            "object",
+            tools[0]["function"]["parameters"]["type"], "object",
             "parameters carries the JSON Schema verbatim"
         );
     }
@@ -1061,7 +1056,10 @@ mod tests {
             name: "finalize_report".into(),
         });
         assert_eq!(specific["tool_choice"]["type"], "function");
-        assert_eq!(specific["tool_choice"]["function"]["name"], "finalize_report");
+        assert_eq!(
+            specific["tool_choice"]["function"]["name"],
+            "finalize_report"
+        );
     }
 
     #[test]
@@ -1085,9 +1083,12 @@ mod tests {
         assert_eq!(wire["content"], "calling classify_target");
         assert_eq!(wire["tool_calls"][0]["id"], "tu_1");
         assert_eq!(wire["tool_calls"][0]["function"]["name"], "classify_target");
-        let args: serde_json::Value =
-            serde_json::from_str(wire["tool_calls"][0]["function"]["arguments"].as_str().unwrap())
-                .unwrap();
+        let args: serde_json::Value = serde_json::from_str(
+            wire["tool_calls"][0]["function"]["arguments"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(args["input"], "0xdeadbeef");
     }
 

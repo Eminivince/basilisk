@@ -287,7 +287,9 @@ async fn stream_with_tool_call_fragments_reassembles_as_one_block() {
                 delta: basilisk_llm::Delta::InputJsonDelta(s),
                 ..
             } => arg_parts.push_str(&s),
-            basilisk_llm::StreamEvent::MessageDelta { stop_reason: sr, .. } => stop_reason = sr,
+            basilisk_llm::StreamEvent::MessageDelta {
+                stop_reason: sr, ..
+            } => stop_reason = sr,
             _ => {}
         }
     }

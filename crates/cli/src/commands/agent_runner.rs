@@ -90,7 +90,7 @@ pub struct AgentFlags {
         long = "db",
         id = "agent_db",
         value_name = "PATH",
-        env = "BASILISK_SESSION_DB",
+        env = "BASILISK_SESSION_DB"
     )]
     pub db: Option<PathBuf>,
 
@@ -109,7 +109,7 @@ pub struct AgentFlags {
         long = "system-prompt",
         id = "agent_system_prompt",
         value_name = "PATH",
-        env = "BASILISK_SYSTEM_PROMPT",
+        env = "BASILISK_SYSTEM_PROMPT"
     )]
     pub system_prompt: Option<PathBuf>,
 
@@ -125,7 +125,7 @@ pub struct AgentFlags {
         long = "model",
         id = "agent_model",
         value_name = "MODEL",
-        env = "BASILISK_LLM_MODEL",
+        env = "BASILISK_LLM_MODEL"
     )]
     pub model: Option<String>,
 
@@ -149,7 +149,7 @@ pub struct AgentFlags {
         long = "llm-base-url",
         id = "agent_llm_base_url",
         value_name = "URL",
-        env = "BASILISK_LLM_BASE_URL",
+        env = "BASILISK_LLM_BASE_URL"
     )]
     pub llm_base_url: Option<String>,
 
@@ -162,7 +162,7 @@ pub struct AgentFlags {
         long = "llm-api-key-env",
         id = "agent_llm_api_key_env",
         value_name = "VAR",
-        env = "BASILISK_LLM_API_KEY_ENV",
+        env = "BASILISK_LLM_API_KEY_ENV"
     )]
     pub llm_api_key_env: Option<String>,
 
@@ -171,7 +171,7 @@ pub struct AgentFlags {
         long = "max-turns",
         id = "agent_max_turns",
         value_name = "N",
-        env = "BASILISK_MAX_TURNS",
+        env = "BASILISK_MAX_TURNS"
     )]
     pub max_turns: Option<u32>,
 
@@ -180,7 +180,7 @@ pub struct AgentFlags {
         long = "max-tokens",
         id = "agent_max_tokens",
         value_name = "N",
-        env = "BASILISK_MAX_TOKENS",
+        env = "BASILISK_MAX_TOKENS"
     )]
     pub max_tokens: Option<u64>,
 
@@ -189,7 +189,7 @@ pub struct AgentFlags {
         long = "max-cost",
         id = "agent_max_cost",
         value_name = "CENTS",
-        env = "BASILISK_MAX_COST_CENTS",
+        env = "BASILISK_MAX_COST_CENTS"
     )]
     pub max_cost_cents: Option<u32>,
 
@@ -198,7 +198,7 @@ pub struct AgentFlags {
         long = "agent-max-duration",
         id = "agent_max_duration",
         value_name = "SECS",
-        env = "BASILISK_MAX_DURATION_SECS",
+        env = "BASILISK_MAX_DURATION_SECS"
     )]
     pub max_duration_secs: Option<u64>,
 
@@ -316,7 +316,10 @@ fn build_runner(flags: &AgentFlags, config: &Config) -> Result<(AgentRunner, Pat
         .mark_running_as_interrupted("agent process restart")
         .context("marking stale sessions interrupted")?;
     if swept > 0 {
-        tracing::info!(count = swept, "marked stale running sessions as interrupted");
+        tracing::info!(
+            count = swept,
+            "marked stale running sessions as interrupted"
+        );
     }
 
     let system_prompt = load_system_prompt(flags.system_prompt.as_deref())?;
@@ -347,6 +350,11 @@ fn build_runner(flags: &AgentFlags, config: &Config) -> Result<(AgentRunner, Pat
 ///  - openai: `--llm-api-key-env` → `OPENAI_API_KEY`.
 ///  - ollama: not required; any non-empty value is accepted if passed.
 ///  - openai-compat: `--llm-api-key-env` (defaults to `OPENAI_API_KEY`).
+// The function is a flat dispatch — one arm per ProviderKind. Splitting
+// each arm into its own helper would fragment the provider-selection
+// logic across five functions that share no interesting state, so we
+// accept the length over the refactor.
+#[allow(clippy::too_many_lines)]
 fn build_backend(flags: &AgentFlags, config: &Config) -> Result<Arc<dyn LlmBackend>> {
     fn resolve_key(
         flags: &AgentFlags,
@@ -360,9 +368,18 @@ fn build_backend(flags: &AgentFlags, config: &Config) -> Result<Arc<dyn LlmBacke
         // Prefer the parsed Config field (covers dotenv) before falling back
         // to a direct env lookup on the default var name.
         match config_field {
-            Some("anthropic") => config.anthropic_api_key.clone().or_else(|| non_empty_env(default_var)),
-            Some("openrouter") => config.openrouter_api_key.clone().or_else(|| non_empty_env(default_var)),
-            Some("openai") => config.openai_api_key.clone().or_else(|| non_empty_env(default_var)),
+            Some("anthropic") => config
+                .anthropic_api_key
+                .clone()
+                .or_else(|| non_empty_env(default_var)),
+            Some("openrouter") => config
+                .openrouter_api_key
+                .clone()
+                .or_else(|| non_empty_env(default_var)),
+            Some("openai") => config
+                .openai_api_key
+                .clone()
+                .or_else(|| non_empty_env(default_var)),
             _ => non_empty_env(default_var),
         }
     }
@@ -370,7 +387,9 @@ fn build_backend(flags: &AgentFlags, config: &Config) -> Result<Arc<dyn LlmBacke
     match flags.provider {
         ProviderKind::Anthropic => {
             let api_key = resolve_key(flags, config, "ANTHROPIC_API_KEY", Some("anthropic"))
-                .context("Anthropic API key is not set — export ANTHROPIC_API_KEY (or --llm-api-key-env)")?;
+                .context(
+                "Anthropic API key is not set — export ANTHROPIC_API_KEY (or --llm-api-key-env)",
+            )?;
             let model = flags.model.as_deref().unwrap_or(DEFAULT_MODEL);
             let backend = AnthropicBackend::with_model(api_key, model)
                 .context("initialising Anthropic backend")?;
@@ -378,7 +397,9 @@ fn build_backend(flags: &AgentFlags, config: &Config) -> Result<Arc<dyn LlmBacke
         }
         ProviderKind::Openrouter => {
             let api_key = resolve_key(flags, config, "OPENROUTER_API_KEY", Some("openrouter"))
-                .context("OpenRouter API key is not set — export OPENROUTER_API_KEY (or --llm-api-key-env)")?;
+                .context(
+                "OpenRouter API key is not set — export OPENROUTER_API_KEY (or --llm-api-key-env)",
+            )?;
             let model = flags
                 .model
                 .as_deref()
@@ -392,15 +413,13 @@ fn build_backend(flags: &AgentFlags, config: &Config) -> Result<Arc<dyn LlmBacke
             Ok(Arc::new(backend))
         }
         ProviderKind::Openai => {
-            let api_key = resolve_key(flags, config, "OPENAI_API_KEY", Some("openai"))
-                .context("OpenAI API key is not set — export OPENAI_API_KEY (or --llm-api-key-env)")?;
+            let api_key = resolve_key(flags, config, "OPENAI_API_KEY", Some("openai")).context(
+                "OpenAI API key is not set — export OPENAI_API_KEY (or --llm-api-key-env)",
+            )?;
             let model = flags.model.as_deref().unwrap_or("gpt-4o");
-            let backend = OpenAICompatibleBackend::with_provider_and_model(
-                Provider::OpenAi,
-                api_key,
-                model,
-            )
-            .context("initialising OpenAI backend")?;
+            let backend =
+                OpenAICompatibleBackend::with_provider_and_model(Provider::OpenAi, api_key, model)
+                    .context("initialising OpenAI backend")?;
             Ok(Arc::new(backend))
         }
         ProviderKind::Ollama => {
@@ -415,9 +434,11 @@ fn build_backend(flags: &AgentFlags, config: &Config) -> Result<Arc<dyn LlmBacke
                     model,
                     Provider::Ollama,
                 ),
-                None => {
-                    OpenAICompatibleBackend::with_provider_and_model(Provider::Ollama, api_key, model)
-                }
+                None => OpenAICompatibleBackend::with_provider_and_model(
+                    Provider::Ollama,
+                    api_key,
+                    model,
+                ),
             }
             .context("initialising Ollama backend")?;
             Ok(Arc::new(backend))
@@ -537,7 +558,10 @@ fn render_pretty(outcome: &AgentOutcome) {
     println!();
     println!("── agent session: {status} ──");
     println!("session_id: {}", outcome.session_id);
-    println!("stop_reason: {}", describe_stop_reason(&outcome.stop_reason));
+    println!(
+        "stop_reason: {}",
+        describe_stop_reason(&outcome.stop_reason)
+    );
     println!(
         "stats: {} turns, {} tool calls, {} tokens, ~{}¢, {}ms{}",
         outcome.stats.turns,

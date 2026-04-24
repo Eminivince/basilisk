@@ -151,7 +151,9 @@ fn build_live_runner(
             let base = base_url
                 .as_deref()
                 .expect("BASILISK_LLM_BASE_URL is required for openai-compat");
-            let model = model.as_deref().expect("BASILISK_LLM_MODEL is required for openai-compat");
+            let model = model
+                .as_deref()
+                .expect("BASILISK_LLM_MODEL is required for openai-compat");
             Arc::new(
                 OpenAICompatibleBackend::with_base_model_and_provider(
                     base,
@@ -199,7 +201,11 @@ fn load_config_or_skip() -> Option<Config> {
         let key_var = std::env::var("BASILISK_LLM_API_KEY_ENV")
             .ok()
             .unwrap_or_else(|| provider.default_key_var().to_string());
-        if std::env::var(&key_var).unwrap_or_default().trim().is_empty() {
+        if std::env::var(&key_var)
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        {
             eprintln!("skipping: {key_var} not set (BASILISK_LLM_PROVIDER={provider:?})");
             return None;
         }

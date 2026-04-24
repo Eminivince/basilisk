@@ -734,10 +734,7 @@ async fn observer_fires_hooks_in_order_across_multi_turn_session() {
 
     // Session boundaries at the extremes.
     assert_eq!(events.first().unwrap(), "session_start");
-    assert_eq!(
-        events.last().unwrap(),
-        "session_complete/report_finalized"
-    );
+    assert_eq!(events.last().unwrap(), "session_complete/report_finalized");
 
     // Every turn has a start/end pair in the right order.
     let turn_start_positions: Vec<usize> = events
@@ -766,7 +763,10 @@ async fn observer_fires_hooks_in_order_across_multi_turn_session() {
     let has = |needle: &str| turn1.iter().any(|e| e.as_str() == needle);
     assert!(has("text/1/starting recon"), "turn1 text: {turn1:?}");
     assert!(has("tool_start/1/echo"), "turn1 tool_start: {turn1:?}");
-    assert!(has("tool_result/1/echo/true"), "turn1 tool_result: {turn1:?}");
+    assert!(
+        has("tool_result/1/echo/true"),
+        "turn1 tool_result: {turn1:?}"
+    );
 
     // Tool start must precede tool result (streamed before dispatch).
     let start_idx = turn1

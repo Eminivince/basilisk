@@ -7,8 +7,8 @@
 //! Re-check each provider's public pricing page quarterly or the next time
 //! cost surfaces as a pain point:
 //!   - Anthropic: <https://www.anthropic.com/pricing>
-//!   - OpenAI:    <https://openai.com/pricing>
-//!   - OpenRouter aggregates all of the above at <https://openrouter.ai/models>
+//!   - `OpenAI`:    <https://openai.com/pricing>
+//!   - `OpenRouter` aggregates all of the above at <https://openrouter.ai/models>
 //!
 //! Only informational — stale numbers produce slightly-wrong cost
 //! estimates, not broken functionality. The runner falls back to a
@@ -91,7 +91,7 @@ pub enum ModelPricingSource {
 ///  - `claude-opus-4-7-20250929`              → Anthropic (prefix family match)
 ///  - `anthropic/claude-opus-4-7`             → Anthropic (alias)
 ///  - `openrouter/anthropic/claude-opus-4-7`  → Anthropic (prefix strip → alias)
-///  - `openrouter/openai/gpt-4o`              → OpenAI   (prefix strip)
+///  - `openrouter/openai/gpt-4o`              → `OpenAI`   (prefix strip)
 ///  - `ollama/llama3.1:70b`                   → zero-cost local
 ///  - `gpt-99-future-model`                   → `Unknown`; cost disabled
 pub struct PricingTable;
@@ -138,7 +138,7 @@ impl PricingTable {
 /// a `starts_with` check on the family prefix matches every dated
 /// variant without needing a row per release.
 ///
-/// OpenAI uses `gpt-4o`, `gpt-4o-mini`, `gpt-5`, `gpt-5-mini` with
+/// `OpenAI` uses `gpt-4o`, `gpt-4o-mini`, `gpt-5`, `gpt-5-mini` with
 /// optional `-<date>` suffixes — same trick.
 ///
 /// Local providers get explicit zero-cost rows so operators see `$0`
@@ -286,10 +286,7 @@ mod tests {
 
     #[test]
     fn haiku_pricing_resolves() {
-        assert_eq!(
-            known("claude-haiku-4-5-20251001").input_per_mtok_cents,
-            100
-        );
+        assert_eq!(known("claude-haiku-4-5-20251001").input_per_mtok_cents, 100);
     }
 
     // ---- OpenAI coverage -------------------------------------------------
