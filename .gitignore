@@ -22,3 +22,8 @@ Thumbs.db
 # Backups / junk
 *.bak
 *.orig
+
+# Knowledge base corpora dropped in the repo root by accident —
+# the real home is ~/.basilisk/knowledge/solodit_dump.jsonl.
+solodit*.jsonl
+*.jsonl.dump

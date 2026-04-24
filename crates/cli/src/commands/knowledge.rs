@@ -352,14 +352,10 @@ fn available_ingesters(config: &Config) -> Vec<Box<dyn Ingester>> {
         RepoCache::open()
             .unwrap_or_else(|_| panic!("can't open repo cache — check filesystem permissions")),
     );
-    let github = build_github_client(config);
     let mut out: Vec<Box<dyn Ingester>> = Vec::new();
     out.push(Box::new(SoloditIngester::new()));
-    let mut swc = SwcIngester::new(Arc::clone(&repo_cache));
-    if let Some(gh) = github.clone() {
-        swc = swc.with_github(gh);
-    }
-    out.push(Box::new(swc));
+    // SWC pins its own ref — no GithubClient needed.
+    out.push(Box::new(SwcIngester::new(Arc::clone(&repo_cache))));
     let mut oz = OzAdvisoriesIngester::new();
     if let Some(tok) = &config.github_token {
         oz = oz.with_token(tok.clone());
@@ -373,11 +369,7 @@ fn ingester_by_name(name: &str, config: &Config) -> Result<Option<Box<dyn Ingest
         "solodit" => Ok(Some(Box::new(SoloditIngester::new()))),
         "swc" => {
             let repo_cache = Arc::new(RepoCache::open().context("opening repo cache")?);
-            let mut swc = SwcIngester::new(repo_cache);
-            if let Some(gh) = build_github_client(config) {
-                swc = swc.with_github(gh);
-            }
-            Ok(Some(Box::new(swc)))
+            Ok(Some(Box::new(SwcIngester::new(repo_cache))))
         }
         "openzeppelin" => {
             let mut oz = OzAdvisoriesIngester::new();

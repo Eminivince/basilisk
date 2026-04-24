@@ -173,32 +173,7 @@ impl Ingester for SwcIngester {
         let start = Instant::now();
         let mut report = IngestReport::empty(self.source_name());
 
-        // Fetch the registry. Shallow-clone since SWC history
-        // isn't relevant — we want the current entries only.
-        //
-        // If the caller wired a GithubClient, use it so `None` as
-        // the ref resolves via default-branch lookup. Otherwise
-        // pin `master` — SWC-registry is frozen and that's its
-        // historical default.
-        let (ref_, github) = if self.github.is_some() {
-            (None, self.github.clone())
-        } else {
-            (Some(GitRef::Branch("master".into())), None)
-        };
-        let fetched = self
-            .cache
-            .fetch(
-                SWC_OWNER,
-                SWC_REPO,
-                ref_,
-                FetchOptions {
-                    strategy: CloneStrategy::Shallow,
-                    force_refresh: false,
-                    github,
-                },
-            )
-            .await
-            .map_err(|e| IngestError::Source(format!("cloning SWC-registry: {e}")))?;
+        let fetched = fetch_swc_registry(&self.cache).await?;
 
         let entries_dir = fetched.working_tree.join("entries");
         let swc_files = collect_swc_files(&entries_dir)?;
@@ -285,6 +260,43 @@ impl Ingester for SwcIngester {
 
         report.duration = start.elapsed();
         Ok(report)
+    }
+}
+
+/// Shallow-clone SWC-registry, trying `master` first and falling
+/// back to `main`. SWC-registry is effectively frozen (no new
+/// entries since ~2021) and its historical default is `master`.
+/// Pinning the ref means we don't need a `GithubClient` for
+/// default-branch lookup — so a bad `GITHUB_TOKEN` can't break
+/// this path.
+async fn fetch_swc_registry(
+    cache: &RepoCache,
+) -> Result<basilisk_git::FetchedRepo, IngestError> {
+    let shallow = FetchOptions {
+        strategy: CloneStrategy::Shallow,
+        force_refresh: false,
+        github: None,
+    };
+    match cache
+        .fetch(
+            SWC_OWNER,
+            SWC_REPO,
+            Some(GitRef::Branch("master".into())),
+            shallow.clone(),
+        )
+        .await
+    {
+        Ok(r) => Ok(r),
+        Err(basilisk_git::GitError::RefNotFound { .. }) => cache
+            .fetch(
+                SWC_OWNER,
+                SWC_REPO,
+                Some(GitRef::Branch("main".into())),
+                shallow,
+            )
+            .await
+            .map_err(|e| IngestError::Source(format!("cloning SWC-registry: {e}"))),
+        Err(e) => Err(IngestError::Source(format!("cloning SWC-registry: {e}"))),
     }
 }
 
