@@ -20,7 +20,7 @@ pub mod testing;
 pub mod tool;
 pub mod tools;
 
-pub use prompts::RECON_V1_PROMPT;
+pub use prompts::{RECON_DEFAULT_PROMPT, RECON_V1_PROMPT, RECON_V2_PROMPT};
 pub use runner::{
     AgentError, AgentObserver, AgentOutcome, AgentRunner, AgentStats, AgentStopReason, Budget,
     NoopObserver,

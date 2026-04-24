@@ -37,7 +37,7 @@ use std::time::Duration;
 
 use basilisk_agent::{
     standard_registry, AgentRunner, AgentStopReason, Budget, NoopObserver, SessionStore,
-    RECON_V1_PROMPT,
+    RECON_DEFAULT_PROMPT,
 };
 use basilisk_core::Config;
 use basilisk_git::RepoCache;
@@ -178,7 +178,7 @@ fn build_live_runner(
         Arc::new(config.clone()),
         github,
         repo_cache,
-        RECON_V1_PROMPT,
+        RECON_DEFAULT_PROMPT,
         budget,
     )
 }

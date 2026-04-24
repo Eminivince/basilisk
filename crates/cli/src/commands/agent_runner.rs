@@ -25,7 +25,7 @@ use anyhow::{Context, Result};
 use basilisk_agent::{
     default_db_path, standard_registry, AgentObserver, AgentOutcome, AgentRunner, AgentStats,
     AgentStopReason, Budget, LoadedSession, NoopObserver, SessionId, SessionStore,
-    RECON_V1_PROMPT,
+    RECON_DEFAULT_PROMPT,
 };
 use basilisk_core::Config;
 use basilisk_git::RepoCache;
@@ -95,7 +95,16 @@ pub struct AgentFlags {
     pub db: Option<PathBuf>,
 
     /// Path to a file containing the system prompt. Overrides the
-    /// embedded `recon_v1` prompt. Useful for prompt iteration.
+    /// embedded default (`recon_v2.md`). Two shipped versions live in
+    /// `crates/agent/src/prompts/`:
+    ///
+    ///  - `recon_v2.md` — current default (set-6.5): tighter report
+    ///    style, length ceilings, no-boilerplate rule.
+    ///  - `recon_v1.md` — original set-6 prompt, kept for comparison.
+    ///    Point at it to reproduce older runs.
+    ///
+    /// You can also point at a working copy of either file to iterate
+    /// on the prompt without rebuilding the binary.
     #[arg(
         long = "system-prompt",
         id = "agent_system_prompt",
@@ -459,7 +468,7 @@ fn build_budget(flags: &AgentFlags) -> Budget {
 
 fn load_system_prompt(path: Option<&Path>) -> Result<String> {
     let Some(p) = path else {
-        return Ok(RECON_V1_PROMPT.to_string());
+        return Ok(RECON_DEFAULT_PROMPT.to_string());
     };
     std::fs::read_to_string(p)
         .with_context(|| format!("reading system prompt from {}", p.display()))
@@ -765,9 +774,9 @@ mod tests {
     }
 
     #[test]
-    fn default_prompt_falls_back_to_recon_v1_when_no_override() {
+    fn default_prompt_falls_back_to_recon_default_when_no_override() {
         let prompt = load_system_prompt(None).unwrap();
-        assert_eq!(prompt, RECON_V1_PROMPT);
+        assert_eq!(prompt, RECON_DEFAULT_PROMPT);
     }
 
     #[test]
