@@ -178,6 +178,14 @@ pub enum AgentError {
     Internal(String),
 }
 
+// Forwarded so the loop can use `?` on `serde_json::to_value` directly
+// instead of routing every call through `SessionError::from`.
+impl From<serde_json::Error> for AgentError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Session(crate::SessionError::Json(e))
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::match_wildcard_for_single_variants)]
 mod tests {
