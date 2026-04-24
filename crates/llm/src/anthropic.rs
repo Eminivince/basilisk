@@ -95,7 +95,13 @@ impl AnthropicBackend {
             return Err(LlmError::AuthError("ANTHROPIC_API_KEY is empty".into()));
         }
         let client = Client::builder()
-            .timeout(Duration::from_secs(120))
+            // Connect fast, then give the server real time to stream
+            // a tool-use turn. A 120s total-timeout cut off Opus mid-
+            // generation on large tool results (USDC / Aave V3 bodies
+            // easily push 2–4 minutes per turn). The agent's own
+            // `--agent-max-duration` is the right upper bound.
+            .connect_timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(600))
             .user_agent(concat!("basilisk/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| LlmError::Other(format!("building http client: {e}")))?;

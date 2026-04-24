@@ -176,7 +176,12 @@ impl OpenAICompatibleBackend {
             )));
         }
         let client = Client::builder()
-            .timeout(Duration::from_secs(120))
+            // Connect fast, then give the server real time to stream
+            // a tool-use turn. See AnthropicBackend for the rationale
+            // — OpenRouter-routed Claude turns against fat tool
+            // results easily cross 2–4 minutes.
+            .connect_timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(600))
             .user_agent(concat!("basilisk/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| LlmError::Other(format!("building http client: {e}")))?;
