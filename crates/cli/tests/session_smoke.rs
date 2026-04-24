@@ -255,3 +255,47 @@ fn recon_help_lists_agent_budget_flags() {
         .stdout(contains("--max-cost"))
         .stdout(contains("--max-tokens"));
 }
+
+#[test]
+fn recon_help_advertises_env_var_support() {
+    // clap renders `[env: VAR=]` next to flags that honour env vars.
+    // This is how operators discover that the flag is configurable
+    // from a `.env` file — we assert it's there.
+    audit()
+        .args(["recon", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("BASILISK_LLM_PROVIDER"))
+        .stdout(contains("BASILISK_LLM_MODEL"))
+        .stdout(contains("BASILISK_LLM_BASE_URL"))
+        .stdout(contains("BASILISK_MAX_COST_CENTS"));
+}
+
+#[test]
+fn env_var_configured_provider_shows_in_agent_starts_up_message() {
+    // Setting BASILISK_LLM_PROVIDER=ollama + model should make the
+    // binary pick the ollama backend. Ollama accepts no key, so the
+    // run will proceed until it tries to reach the ollama server and
+    // get a connection refused. We assert the startup banner shows
+    // the ollama identifier — proving env vars won.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let out = audit()
+        .env("BASILISK_LLM_PROVIDER", "ollama")
+        .env("BASILISK_LLM_MODEL", "llama3.1:70b")
+        .env("BASILISK_LLM_BASE_URL", "http://127.0.0.1:1/v1") // unreachable
+        .env("BASILISK_MAX_TURNS", "1")
+        .env("HOME", tmp.path())
+        .env("XDG_CACHE_HOME", tmp.path())
+        .current_dir(tmp.path())
+        .args(["recon", "/tmp/nowhere", "--agent"])
+        .assert();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.get_output().stdout),
+        String::from_utf8_lossy(&out.get_output().stderr),
+    );
+    assert!(
+        combined.contains("ollama/llama3.1:70b"),
+        "expected startup banner to show ollama/llama3.1:70b; got:\n{combined}",
+    );
+}

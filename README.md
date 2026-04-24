@@ -326,6 +326,26 @@ neutral — `audit session list` / `show <id>` work identically across
 providers. The session row records `model = "<provider>/<model>"` so
 a mixed DB remains attributable.
 
+**Setting defaults in `.env`.** Every agent flag has an env-var twin,
+so you can put provider + model + budgets in `.env` once and drop the
+flags from every invocation:
+
+```bash
+# .env
+BASILISK_LLM_PROVIDER=openrouter
+BASILISK_LLM_MODEL=anthropic/claude-opus-4-7
+BASILISK_MAX_COST_CENTS=300
+```
+
+```bash
+# now this just works:
+audit recon <target> --agent
+```
+
+CLI flags override env vars, so one-off tweaks stay cheap: `audit recon
+<target> --agent --model openai/gpt-4o`. The full list of `BASILISK_*`
+variables is documented in `.env.example`.
+
 Local-model caveat: tool-use quality varies significantly by model.
 A 7B-class model rarely completes a recon brief without supervision.
 The 70B-class Llamas / Qwens work well in our testing.

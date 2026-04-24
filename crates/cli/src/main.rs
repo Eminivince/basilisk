@@ -45,6 +45,12 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env before clap parses, so `#[arg(env = "...")]` directives
+    // on agent flags (--provider, --model, …) pick up values from the
+    // repo's .env file. Config::load() below is idempotent w.r.t.
+    // dotenv — it's safe to invoke a second time.
+    let _ = dotenvy::dotenv();
+
     let cli = Cli::parse();
 
     let config = Config::load().context("loading configuration")?;

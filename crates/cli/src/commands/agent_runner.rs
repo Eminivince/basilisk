@@ -86,12 +86,22 @@ pub struct AgentFlags {
     pub note: Option<String>,
 
     /// Path to the session database. Defaults to `~/.basilisk/sessions.db`.
-    #[arg(long = "db", id = "agent_db", value_name = "PATH")]
+    #[arg(
+        long = "db",
+        id = "agent_db",
+        value_name = "PATH",
+        env = "BASILISK_SESSION_DB",
+    )]
     pub db: Option<PathBuf>,
 
     /// Path to a file containing the system prompt. Overrides the
     /// embedded `recon_v1` prompt. Useful for prompt iteration.
-    #[arg(long = "system-prompt", id = "agent_system_prompt", value_name = "PATH")]
+    #[arg(
+        long = "system-prompt",
+        id = "agent_system_prompt",
+        value_name = "PATH",
+        env = "BASILISK_SYSTEM_PROMPT",
+    )]
     pub system_prompt: Option<PathBuf>,
 
     /// Model id. Meaning depends on `--provider`:
@@ -102,7 +112,12 @@ pub struct AgentFlags {
     ///  - openai: `gpt-4o`, `gpt-4o-mini`, …
     ///  - ollama / openai-compat: whatever the server exposes, e.g.
     ///    `llama3.1:70b`, `qwen2.5-coder:32b`.
-    #[arg(long = "model", id = "agent_model", value_name = "MODEL")]
+    #[arg(
+        long = "model",
+        id = "agent_model",
+        value_name = "MODEL",
+        env = "BASILISK_LLM_MODEL",
+    )]
     pub model: Option<String>,
 
     /// Which LLM backend to drive. Default: `anthropic`.
@@ -112,6 +127,7 @@ pub struct AgentFlags {
         value_enum,
         default_value_t = ProviderKind::Anthropic,
         value_name = "PROVIDER",
+        env = "BASILISK_LLM_PROVIDER",
     )]
     pub provider: ProviderKind,
 
@@ -120,7 +136,12 @@ pub struct AgentFlags {
     /// `--provider ollama` (default: `http://localhost:11434/v1`).
     /// Ignored for `anthropic`/`openrouter`/`openai` — those have
     /// fixed endpoints.
-    #[arg(long = "llm-base-url", id = "agent_llm_base_url", value_name = "URL")]
+    #[arg(
+        long = "llm-base-url",
+        id = "agent_llm_base_url",
+        value_name = "URL",
+        env = "BASILISK_LLM_BASE_URL",
+    )]
     pub llm_base_url: Option<String>,
 
     /// Name of the env var to read the API key from. Defaults per
@@ -128,23 +149,48 @@ pub struct AgentFlags {
     /// `OPENAI_API_KEY`. Ignored for ollama (no key required). Use
     /// this when you have a custom env var name or want to pick
     /// between keys at runtime.
-    #[arg(long = "llm-api-key-env", id = "agent_llm_api_key_env", value_name = "VAR")]
+    #[arg(
+        long = "llm-api-key-env",
+        id = "agent_llm_api_key_env",
+        value_name = "VAR",
+        env = "BASILISK_LLM_API_KEY_ENV",
+    )]
     pub llm_api_key_env: Option<String>,
 
     /// Max LLM turns.
-    #[arg(long = "max-turns", id = "agent_max_turns", value_name = "N")]
+    #[arg(
+        long = "max-turns",
+        id = "agent_max_turns",
+        value_name = "N",
+        env = "BASILISK_MAX_TURNS",
+    )]
     pub max_turns: Option<u32>,
 
     /// Max total tokens (input + output + cache).
-    #[arg(long = "max-tokens", id = "agent_max_tokens", value_name = "N")]
+    #[arg(
+        long = "max-tokens",
+        id = "agent_max_tokens",
+        value_name = "N",
+        env = "BASILISK_MAX_TOKENS",
+    )]
     pub max_tokens: Option<u64>,
 
     /// Max estimated spend in cents.
-    #[arg(long = "max-cost", id = "agent_max_cost", value_name = "CENTS")]
+    #[arg(
+        long = "max-cost",
+        id = "agent_max_cost",
+        value_name = "CENTS",
+        env = "BASILISK_MAX_COST_CENTS",
+    )]
     pub max_cost_cents: Option<u32>,
 
     /// Max wall-clock duration in seconds (agent only).
-    #[arg(long = "agent-max-duration", id = "agent_max_duration", value_name = "SECS")]
+    #[arg(
+        long = "agent-max-duration",
+        id = "agent_max_duration",
+        value_name = "SECS",
+        env = "BASILISK_MAX_DURATION_SECS",
+    )]
     pub max_duration_secs: Option<u64>,
 
     /// Output format for the agent's final summary.
@@ -157,7 +203,7 @@ pub struct AgentFlags {
     pub output: OutputFormat,
 
     /// Suppress the live progress stream on stderr.
-    #[arg(long = "no-stream", id = "agent_no_stream")]
+    #[arg(long = "no-stream", id = "agent_no_stream", env = "BASILISK_NO_STREAM")]
     pub no_stream: bool,
 }
 
