@@ -249,6 +249,15 @@ impl Ingester for SwcIngester {
                 .await?;
             report.records_new += stats.inserted;
             report.records_updated += stats.updated;
+
+            if let Some(cb) = &options.progress {
+                cb(crate::ingester::IngestProgress {
+                    records_scanned: report.records_scanned,
+                    records_upserted: report.records_new + report.records_updated,
+                    records_skipped: report.records_skipped,
+                    embedding_tokens_used: report.embedding_tokens_used,
+                });
+            }
         }
 
         // Persist state.

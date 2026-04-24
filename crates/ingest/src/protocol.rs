@@ -153,7 +153,7 @@ impl Ingester for ProtocolIngester {
         &self,
         vector_store: Arc<dyn VectorStore>,
         embeddings: Arc<dyn EmbeddingProvider>,
-        _options: IngestOptions,
+        options: IngestOptions,
     ) -> Result<IngestReport, IngestError> {
         let start = Instant::now();
         let mut report = IngestReport::empty(self.source_name());
@@ -204,6 +204,15 @@ impl Ingester for ProtocolIngester {
                 .await?;
             report.records_new += stats.inserted;
             report.records_updated += stats.updated;
+
+            if let Some(cb) = &options.progress {
+                cb(crate::ingester::IngestProgress {
+                    records_scanned: report.records_scanned,
+                    records_upserted: report.records_new + report.records_updated,
+                    records_skipped: report.records_skipped,
+                    embedding_tokens_used: report.embedding_tokens_used,
+                });
+            }
         }
 
         report.duration = start.elapsed();

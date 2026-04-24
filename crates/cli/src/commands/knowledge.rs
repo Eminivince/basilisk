@@ -27,8 +27,8 @@ use basilisk_embeddings::{
 use basilisk_git::RepoCache;
 use basilisk_github::GithubClient;
 use basilisk_ingest::{
-    IngestOptions, Ingester, OzAdvisoriesIngester, ProtocolIngester, ProtocolSource,
-    SoloditIngester, SwcIngester,
+    IngestOptions, IngestProgress, Ingester, OzAdvisoriesIngester, ProtocolIngester,
+    ProtocolSource, SoloditIngester, SwcIngester,
 };
 use basilisk_knowledge::{Correction, FindingId, KnowledgeBase, SearchFilters, UserVerdict};
 use basilisk_vector::{FileVectorStore, VectorStore};
@@ -296,24 +296,28 @@ async fn run_ingest(args: &IngestArgs, config: &Config) -> Result<()> {
         }
     };
 
-    let options = IngestOptions {
-        incremental: args.incremental,
-        max_records: args.max_records,
-        ..Default::default()
-    };
-
     for ingester in ingesters {
         let name = ingester.source_name().to_string();
         println!("→ ingesting {name}");
+        let options = IngestOptions {
+            incremental: args.incremental,
+            max_records: args.max_records,
+            progress: Some(progress_printer()),
+            ..Default::default()
+        };
         match ingester
             .ingest(
                 store.clone() as Arc<dyn VectorStore>,
                 embeddings.clone(),
-                options.clone(),
+                options,
             )
             .await
         {
             Ok(report) => {
+                // Clear the in-place progress line before printing
+                // the final summary — otherwise it leaves leftover
+                // chars when the summary line is shorter.
+                eprintln!();
                 println!(
                     "  {name}: scanned={}, new={}, updated={}, skipped={}, tokens={}, errors={}, {:.1}s",
                     report.records_scanned,
@@ -330,11 +334,32 @@ async fn run_ingest(args: &IngestArgs, config: &Config) -> Result<()> {
             }
             Err(e) => {
                 // One ingester failing doesn't stop the others.
+                eprintln!();
                 eprintln!("  {name}: FAILED: {e}");
             }
         }
     }
     Ok(())
+}
+
+/// Build a progress callback that prints a single in-place
+/// line to stderr so operators see "scanned=… upserted=… tokens=…"
+/// climbing without the terminal flooding. Uses `\r` for in-place
+/// updates; the caller prints a trailing newline before the summary
+/// line so the progress doesn't get overwritten.
+fn progress_printer() -> Arc<dyn Fn(IngestProgress) + Send + Sync> {
+    Arc::new(|p: IngestProgress| {
+        use std::io::Write;
+        let mut err = std::io::stderr().lock();
+        // `\r` carriage-returns to column 0; pad with trailing
+        // spaces so shorter lines don't leave stale characters.
+        let _ = write!(
+            err,
+            "\r  scanned={:>6} upserted={:>6} skipped={:>6} tokens={:>8}   ",
+            p.records_scanned, p.records_upserted, p.records_skipped, p.embedding_tokens_used,
+        );
+        let _ = err.flush();
+    })
 }
 
 /// Build a `GithubClient` from `config.github_token`. Works without
