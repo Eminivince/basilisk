@@ -287,15 +287,27 @@ impl Ingester for SoloditIngester {
 
         // Load prior state so incremental runs skip records already
         // persisted. The cursor is the last successfully-ingested
-        // id — we keep every line > cursor (string > on ids is the
-        // ingester's convention; Solodit ids sort lexicographically).
+        // file position — the cursor is the 1-based line count of
+        // the last successfully-processed row. Content-hash ids
+        // (OpenAI-chat dumps) aren't chronological, so an id-based
+        // cursor produces silent data loss; file position always
+        // works for append-only JSONL dumps.
+        //
+        // Legacy id-based cursor strings won't parse as usize and
+        // fall back to `0` — a full re-ingest. Upsert is idempotent
+        // for unchanged content, so the cost is re-embedding, not
+        // duplication.
         let state_file = crate::state::default_state_path();
         let mut persistent = IngestState::load(&state_file)?;
         let prior = persistent.get(self.source_name());
-        let cursor = if options.incremental {
-            prior.cursor.clone()
+        let cursor_lines = if options.incremental {
+            prior
+                .cursor
+                .as_deref()
+                .and_then(|c| c.parse::<usize>().ok())
+                .unwrap_or(0)
         } else {
-            None
+            0
         };
 
         if !self.dump_path.exists() {
@@ -308,9 +320,9 @@ impl Ingester for SoloditIngester {
 
         // Parse the JSONL into IngestRecords. Malformed lines go
         // into report.errors and don't halt the run.
-        let rows = read_rows(
+        let (rows, next_cursor_lines) = read_rows(
             &self.dump_path,
-            cursor.as_deref(),
+            cursor_lines,
             options.max_records,
             &mut report,
         )?;
@@ -343,7 +355,6 @@ impl Ingester for SoloditIngester {
 
         // Embed in batches sized to the provider's cap.
         let batch_size = embeddings.max_batch_size().min(64);
-        let mut newest_id: Option<String> = prior.cursor.clone();
 
         for chunk in rows.chunks(batch_size) {
             let mut chunks_flat = Vec::new();
@@ -384,14 +395,6 @@ impl Ingester for SoloditIngester {
             report.records_new += stats.inserted;
             report.records_updated += stats.updated;
 
-            // Advance cursor to the largest source_id seen in this
-            // batch. String ordering matches Solodit's id convention.
-            for row in chunk {
-                if newest_id.as_deref().is_none_or(|c| row.id.as_str() > c) {
-                    newest_id = Some(row.id.clone());
-                }
-            }
-
             if let Some(cb) = &options.progress {
                 cb(IngestProgress {
                     records_scanned: report.records_scanned,
@@ -410,7 +413,7 @@ impl Ingester for SoloditIngester {
         persistent.set(
             self.source_name(),
             SourceState {
-                cursor: newest_id,
+                cursor: Some(next_cursor_lines.to_string()),
                 records_ingested: prior.records_ingested
                     + u64::try_from(report.records_new + report.records_updated)
                         .unwrap_or(u64::MAX),
@@ -424,30 +427,42 @@ impl Ingester for SoloditIngester {
     }
 }
 
-/// Read the JSONL dump, optionally skipping rows at or below
-/// `cursor`. Malformed lines are appended to `report.errors` and
-/// skipped, not fatal.
+/// Read the JSONL dump, skipping the first `cursor_lines` lines
+/// (file-position cursor — the only scheme that works for the
+/// content-hash id path, where ids aren't chronological).
+/// Malformed lines append to `report.errors` and are skipped, not
+/// fatal. Returns `(rows, next_cursor)` where `next_cursor` is the
+/// number of physical lines read — to be stored after a successful
+/// ingest so the next incremental run resumes from there.
 fn read_rows(
     path: &Path,
-    cursor: Option<&str>,
+    cursor_lines: usize,
     max_records: Option<usize>,
     report: &mut IngestReport,
-) -> Result<Vec<SoloditFindingRow>, IngestError> {
+) -> Result<(Vec<SoloditFindingRow>, usize), IngestError> {
     let file = std::fs::File::open(path)?;
     let reader = std::io::BufReader::new(file);
     let mut out = Vec::new();
+    let mut next_cursor = cursor_lines;
     for (line_no, line) in reader.lines().enumerate() {
         let line = line?;
+        next_cursor = line_no + 1;
+        if line_no < cursor_lines {
+            // Count as skipped only when the line would have been a
+            // valid record; blank lines + malformed lines shouldn't
+            // inflate the skipped tally.
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && parse_any_row(trimmed).is_ok() {
+                report.records_skipped += 1;
+            }
+            continue;
+        }
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
         match parse_any_row(trimmed) {
             Ok(row) => {
-                if cursor.is_some_and(|c| row.id.as_str() <= c) {
-                    report.records_skipped += 1;
-                    continue;
-                }
                 out.push(row);
                 if max_records.is_some_and(|m| out.len() >= m) {
                     break;
@@ -458,7 +473,7 @@ fn read_rows(
             }
         }
     }
-    Ok(out)
+    Ok((out, next_cursor))
 }
 
 #[cfg(test)]
@@ -533,7 +548,7 @@ mod tests {
         );
         std::fs::write(&path, body).unwrap();
         let mut report = IngestReport::empty("solodit");
-        let rows = read_rows(&path, None, None, &mut report).unwrap();
+        let (rows, _next) = read_rows(&path, 0, None, &mut report).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(report.errors.len(), 1);
         assert!(report.errors[0].0.contains("line:2"));
@@ -551,11 +566,13 @@ mod tests {
         );
         std::fs::write(&path, body).unwrap();
         let mut report = IngestReport::empty("solodit");
-        let rows = read_rows(&path, Some("sol-a"), None, &mut report).unwrap();
-        // Only sol-b and sol-c are strictly greater than the cursor.
+        // File-position cursor: skip the first 1 line.
+        let (rows, next) = read_rows(&path, 1, None, &mut report).unwrap();
         let ids: Vec<_> = rows.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, vec!["sol-b", "sol-c"]);
         assert_eq!(report.records_skipped, 1);
+        // next cursor advances to the total line count.
+        assert_eq!(next, 3);
     }
 
     #[test]
@@ -571,7 +588,7 @@ mod tests {
         );
         std::fs::write(&path, body).unwrap();
         let mut report = IngestReport::empty("solodit");
-        let rows = read_rows(&path, None, Some(2), &mut report).unwrap();
+        let (rows, _next) = read_rows(&path, 0, Some(2), &mut report).unwrap();
         assert_eq!(rows.len(), 2);
     }
 
@@ -612,7 +629,7 @@ mod tests {
         let path = dir.path().join("dump.jsonl");
         std::fs::write(&path, "").unwrap();
         let mut report = IngestReport::empty("solodit");
-        let rows = read_rows(&path, None, None, &mut report).unwrap();
+        let (rows, _next) = read_rows(&path, 0, None, &mut report).unwrap();
         assert!(rows.is_empty());
         assert!(report.errors.is_empty());
     }
