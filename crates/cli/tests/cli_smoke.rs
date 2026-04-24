@@ -10,10 +10,15 @@ fn audit() -> Command {
 
 /// Point XDG + HOME at a scratch dir so cache writes can't leak into
 /// `$HOME/.cache/basilisk` on a developer machine running the test suite.
+///
+/// Also runs the binary with `cwd = scratch`, so `Config::load()`'s
+/// dotenv-walk doesn't find the repo's top-level `.env` and silently
+/// repopulate the API keys this test tries to unset.
 fn audit_isolated(scratch: &TempDir) -> Command {
     let mut cmd = audit();
     cmd.env("XDG_CACHE_HOME", scratch.path())
-        .env("HOME", scratch.path());
+        .env("HOME", scratch.path())
+        .current_dir(scratch.path());
     cmd
 }
 

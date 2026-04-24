@@ -261,23 +261,31 @@ mod tests {
 
     #[test]
     fn unresolved_imports_list_is_sorted_by_importer_then_line() {
+        // Every import target is unresolvable — and the names are
+        // chosen to avoid colliding with the importer files even
+        // case-insensitively (`./a.sol` on a case-insensitive volume
+        // would otherwise resolve to `src/A.sol`, which is a platform
+        // quirk this test is not about).
         let tmp = TempDir::new().unwrap();
         write(
             &tmp.path().join("foundry.toml"),
             "[profile.default]\nsrc = \"src\"\n",
         );
         write(
-            &tmp.path().join("src/B.sol"),
-            "import \"./a.sol\";\nimport \"./b.sol\";\n",
+            &tmp.path().join("src/Beta.sol"),
+            "import \"./nowhere1.sol\";\nimport \"./nowhere2.sol\";\n",
         );
-        write(&tmp.path().join("src/A.sol"), "import \"./x.sol\";\n");
+        write(
+            &tmp.path().join("src/Alpha.sol"),
+            "import \"./gone.sol\";\n",
+        );
         let rp = resolve_project(tmp.path()).unwrap();
         let unresolved = rp.unresolved_imports();
-        assert_eq!(unresolved.len(), 3);
-        // A.sol (alphabetically first) before B.sol.
-        assert!(unresolved[0].0.ends_with("A.sol"));
-        assert!(unresolved[1].0.ends_with("B.sol"));
-        assert_eq!(unresolved[1].1, 1); // B.sol line 1 before line 2.
+        assert_eq!(unresolved.len(), 3, "unresolved: {unresolved:?}");
+        // Alpha.sol (alphabetically first) before Beta.sol.
+        assert!(unresolved[0].0.ends_with("Alpha.sol"));
+        assert!(unresolved[1].0.ends_with("Beta.sol"));
+        assert_eq!(unresolved[1].1, 1); // Beta.sol line 1 before line 2.
         assert_eq!(unresolved[2].1, 2);
     }
 
