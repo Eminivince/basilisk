@@ -83,13 +83,6 @@ pub struct AgentRunner {
     /// simulations. `None` → exec-dependent tools return a typed
     /// error. Set via [`AgentRunner::with_exec`].
     pub(crate) exec: Option<Arc<dyn basilisk_exec::ExecutionBackend>>,
-    /// Live cache of resolved systems this session. Re-created per
-    /// session in [`drive_loop`]; shared via `ToolContext` so
-    /// `resolve_onchain_system` can populate it and
-    /// `find_callers_of` / `trace_state_dependencies` can read
-    /// from it.
-    #[allow(clippy::type_complexity)]
-    pub(crate) resolved_systems_default: std::marker::PhantomData<()>,
 }
 
 impl AgentRunner {
@@ -119,7 +112,6 @@ impl AgentRunner {
             engagement_id: None,
             scratchpad_store: None,
             exec: None,
-            resolved_systems_default: std::marker::PhantomData,
         }
     }
 
