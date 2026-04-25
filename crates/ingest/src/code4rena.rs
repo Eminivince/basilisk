@@ -71,6 +71,12 @@ impl Code4renaFindingRow {
         }
         tags.push(format!("contest:{}", self.contest));
 
+        // Pull GitHub blob URLs out of the body before move so the
+        // record carries `(file, line)` refs back to the original
+        // codebase. The codebase repo is the same contest slug
+        // without `-findings`; lazy fetchers use that mapping.
+        let code_refs = crate::code_refs::extract_code_refs(&self.body);
+
         let mut extra = serde_json::Map::new();
         extra.insert("contest".into(), self.contest.into());
         extra.insert("severity".into(), self.severity.into());
@@ -82,6 +88,12 @@ impl Code4renaFindingRow {
         }
         if let Some(u) = self.finding_url {
             extra.insert("finding_url".into(), u.into());
+        }
+        if !code_refs.is_empty() {
+            extra.insert(
+                "code_refs".into(),
+                serde_json::to_value(&code_refs).unwrap_or(serde_json::Value::Null),
+            );
         }
 
         IngestRecord {
@@ -1020,6 +1032,51 @@ Low quality issue.
         assert!(ir.tags.contains(&"auditor:alice".to_string()));
         assert!(ir.tags.contains(&"contest:2024-04-test".to_string()));
         assert_eq!(ir.extra["contest"], "2024-04-test");
+    }
+
+    #[test]
+    fn into_ingest_record_extracts_code_refs_from_body() {
+        let body = "
+            Bug at [PositionManager.sol#L262-L323](https://github.com/code-423n4/2023-05-ajna/blob/276942bc/ajna-core/src/PositionManager.sol#L262-L323).
+        ";
+        let row = Code4renaFindingRow {
+            id: "2023-05-ajna:high:001".into(),
+            contest: "2023-05-ajna".into(),
+            title: "T".into(),
+            body: body.into(),
+            severity: "high".into(),
+            category: None,
+            auditor: None,
+            finding_url: None,
+        };
+        let ir = row.into_ingest_record();
+        let refs = ir
+            .extra
+            .get("code_refs")
+            .expect("code_refs missing")
+            .as_array()
+            .expect("code_refs not an array");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0]["repo"], "2023-05-ajna");
+        assert_eq!(refs[0]["path"], "ajna-core/src/PositionManager.sol");
+        assert_eq!(refs[0]["line_start"], 262);
+        assert_eq!(refs[0]["line_end"], 323);
+    }
+
+    #[test]
+    fn into_ingest_record_omits_code_refs_when_body_has_none() {
+        let row = Code4renaFindingRow {
+            id: "x:y:z".into(),
+            contest: "x".into(),
+            title: "T".into(),
+            body: "no urls here".into(),
+            severity: "low".into(),
+            category: None,
+            auditor: None,
+            finding_url: None,
+        };
+        let ir = row.into_ingest_record();
+        assert!(ir.extra.get("code_refs").is_none());
     }
 
     #[test]

@@ -181,12 +181,16 @@ fn hard_split(s: &str, max_bytes: usize) -> Vec<String> {
     let mut out = Vec::new();
     let mut remaining = s;
     while remaining.len() > max_bytes {
-        // Try splitting on whitespace near the boundary; fall back
-        // to the last char boundary at or before `max_bytes`.
-        let candidate = &remaining[..max_bytes];
-        let cut = candidate
-            .rfind(char::is_whitespace)
-            .unwrap_or_else(|| last_char_boundary(candidate));
+        // Snap `max_bytes` back to a char boundary first — slicing
+        // a multibyte char in half panics. Then try splitting on
+        // whitespace near that boundary; fall back to the boundary
+        // itself when the chunk has no whitespace.
+        let safe_max = nearest_char_boundary_at_or_before(remaining, max_bytes);
+        let candidate = &remaining[..safe_max];
+        let cut = candidate.rfind(char::is_whitespace).unwrap_or(safe_max);
+        // `cut == 0` would loop forever — fall back to the safe max
+        // when whitespace appears at the start of the window.
+        let cut = if cut == 0 { safe_max } else { cut };
         let (head, tail) = remaining.split_at(cut);
         out.push(head.trim().to_string());
         remaining = tail.trim_start();
@@ -197,8 +201,12 @@ fn hard_split(s: &str, max_bytes: usize) -> Vec<String> {
     out
 }
 
-fn last_char_boundary(s: &str) -> usize {
-    let mut i = s.len();
+/// Largest byte index `≤ idx` that lies on a UTF-8 char boundary.
+/// Returns 0 if `idx` is 0 or the string is empty (always a valid
+/// boundary). Never panics.
+fn nearest_char_boundary_at_or_before(s: &str, idx: usize) -> usize {
+    let cap = idx.min(s.len());
+    let mut i = cap;
     while i > 0 && !s.is_char_boundary(i) {
         i -= 1;
     }
@@ -334,5 +342,34 @@ mod tests {
         let chunks = chunk_record(&sample_record(body), 50); // cap 200 bytes
                                                              // Must not panic; all chunks are valid UTF-8 by construction.
         assert!(!chunks.is_empty());
+    }
+
+    #[test]
+    fn hard_split_does_not_panic_when_max_lands_inside_multibyte_char() {
+        // Reproduces a real-world panic from a Code4rena ingest:
+        // `byte index 64000 is not a char boundary; it is inside '·'`.
+        // The middle-dot char is 2 bytes, so a body of `a` repeated
+        // up to one byte before a `·` puts the cap exactly inside it.
+        let mut body = "a".repeat(63_999);
+        body.push('·');
+        body.push_str(&"a".repeat(1000));
+        // This call would panic on the old slice-then-snap impl.
+        let chunks = hard_split(&body, 64_000);
+        assert!(!chunks.is_empty());
+        // Every chunk must be valid UTF-8 (Rust enforces this on
+        // String construction; this assert documents the invariant).
+        for c in &chunks {
+            assert!(c.is_char_boundary(0));
+            assert!(c.is_char_boundary(c.len()));
+        }
+    }
+
+    #[test]
+    fn nearest_char_boundary_handles_oversized_idx() {
+        let s = "ab·cd"; // bytes: a(1) b(1) ·(2) c(1) d(1) = 6
+        assert_eq!(nearest_char_boundary_at_or_before(s, 100), s.len());
+        // idx=3 lands inside the `·` (which spans bytes 2..4); snap to 2.
+        assert_eq!(nearest_char_boundary_at_or_before(s, 3), 2);
+        assert_eq!(nearest_char_boundary_at_or_before(s, 0), 0);
     }
 }

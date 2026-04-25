@@ -18,6 +18,7 @@
 //! context) arrive in CP7.5–CP7.7.
 
 pub mod code4rena;
+pub mod code_refs;
 pub mod error;
 pub mod ingester;
 pub mod normalize;
@@ -31,6 +32,7 @@ pub mod swc;
 pub mod trailofbits;
 
 pub use code4rena::{Code4renaFindingRow, Code4renaIngester};
+pub use code_refs::{extract_code_refs, CodeRef};
 pub use error::IngestError;
 pub use ingester::{
     IngestOptions, IngestProgress, IngestRecord, IngestReport, Ingester, IngesterKind,

@@ -59,6 +59,8 @@ impl SherlockFindingRow {
         }
         tags.push(format!("audit:{}", self.audit));
 
+        let code_refs = crate::code_refs::extract_code_refs(&self.body);
+
         let mut extra = serde_json::Map::new();
         extra.insert("audit".into(), self.audit.into());
         extra.insert("severity".into(), self.severity.into());
@@ -67,6 +69,12 @@ impl SherlockFindingRow {
         }
         if let Some(u) = self.finding_url {
             extra.insert("finding_url".into(), u.into());
+        }
+        if !code_refs.is_empty() {
+            extra.insert(
+                "code_refs".into(),
+                serde_json::to_value(&code_refs).unwrap_or(serde_json::Value::Null),
+            );
         }
 
         IngestRecord {
@@ -431,6 +439,32 @@ Body for low finding.
         assert_eq!(ir.kind, "finding");
         assert!(ir.tags.contains(&"severity:high".to_string()));
         assert!(ir.tags.contains(&"audit:2024-01-foo".to_string()));
+    }
+
+    #[test]
+    fn into_ingest_record_extracts_code_refs_from_body() {
+        let body = "see https://github.com/sherlock-audit/2024-foo/blob/main/contracts/X.sol#L10-L20";
+        let row = SherlockFindingRow {
+            id: "audit:H:1".into(),
+            audit: "audit".into(),
+            title: "T".into(),
+            body: body.into(),
+            severity: "high".into(),
+            category: None,
+            finding_url: None,
+        };
+        let ir = row.into_ingest_record();
+        let refs = ir
+            .extra
+            .get("code_refs")
+            .expect("code_refs missing")
+            .as_array()
+            .expect("code_refs not an array");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0]["owner"], "sherlock-audit");
+        assert_eq!(refs[0]["path"], "contracts/X.sol");
+        assert_eq!(refs[0]["line_start"], 10);
+        assert_eq!(refs[0]["line_end"], 20);
     }
 
     #[test]
