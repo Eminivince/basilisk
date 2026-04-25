@@ -29,6 +29,7 @@
 //!   paths used by the CLI and agent system prompt, respectively.
 
 pub mod error;
+pub mod ops;
 pub mod render;
 pub mod store;
 pub mod types;
