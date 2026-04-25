@@ -20,6 +20,7 @@ pub mod backend;
 pub mod error;
 pub mod forge;
 pub mod mock;
+pub mod registry;
 pub mod rpc_url;
 pub mod types;
 
@@ -28,6 +29,7 @@ pub use backend::{ExecutionBackend, Fork};
 pub use error::ExecError;
 pub use forge::{forge_binary, run_forge_test, scaffold_minimal_project};
 pub use mock::{MockExecutionBackend, MockFork};
+pub use registry::{ForkRegistry, GLOBAL_FORK_REGISTRY};
 pub use rpc_url::resolve_rpc_url;
 pub use types::{
     CallResult, EventLog, ForgeProject, ForgeTestResult, ForkBlock, ForkChain, ForkSpec,

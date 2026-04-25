@@ -168,7 +168,13 @@ impl ExecutionBackend for AnvilForkBackend {
         // Block until anvil is reachable.
         wait_for_ready(&inner, self.startup_timeout).await?;
         info!(id = %inner.id, "anvil fork ready");
-        Ok(Arc::new(AnvilFork { inner }))
+        let fork: Arc<dyn Fork> = Arc::new(AnvilFork { inner });
+        // Set 9.5 / CP9.5.5 — register the fork in the global
+        // signal-cleanup registry. Weak ref only; doesn't extend
+        // lifetime. The CLI's signal handler iterates the registry
+        // on Ctrl-C / SIGTERM.
+        crate::registry::GLOBAL_FORK_REGISTRY.register(&fork);
+        Ok(fork)
     }
 }
 
