@@ -423,17 +423,44 @@ fn build_runner(flags: &AgentFlags, config: &Config) -> Result<(AgentRunner, Pat
         basilisk_scratchpad::ScratchpadStore::open(&db_path).context("opening scratchpad store")?,
     );
 
-    let runner = AgentRunner::new(
+    // Set 9 / CP9.12 — registry + prompt selection depends on
+    // `--vuln`. Recon flows keep standard_registry + whatever
+    // system_prompt loaded (recon_v2.md by default). Vuln flows
+    // swap to vuln_registry (25 tools) and VULN_V1_PROMPT unless
+    // the operator overrode via `--system-prompt` /
+    // BASILISK_SYSTEM_PROMPT.
+    let (registry, system_prompt_selected) = if flags.vuln {
+        let prompt = if flags.system_prompt.is_some() {
+            system_prompt
+        } else {
+            basilisk_agent::VULN_V1_PROMPT.to_string()
+        };
+        (basilisk_agent::vuln_registry(), prompt)
+    } else {
+        (standard_registry(), system_prompt)
+    };
+
+    let mut runner = AgentRunner::new(
         backend,
-        standard_registry(),
+        registry,
         Arc::clone(&store),
         Arc::new(config.clone()),
         github,
         repo_cache,
-        system_prompt,
+        system_prompt_selected,
         build_budget(flags),
     )
     .with_scratchpad(scratchpad_store);
+
+    // Vuln runs always get an anvil-backed exec so simulate_call_chain
+    // and build_and_run_foundry_test have a backend. Missing Foundry
+    // is surfaced at session-start in run_agent_with_outcome.
+    if flags.vuln {
+        let exec: Arc<dyn basilisk_exec::ExecutionBackend> =
+            Arc::new(basilisk_exec::AnvilForkBackend::new());
+        runner = runner.with_exec(exec);
+    }
+
     Ok((runner, db_path))
 }
 

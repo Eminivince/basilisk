@@ -152,6 +152,17 @@ impl AgentRunner {
         self
     }
 
+    /// Builder: attach an execution backend. Sessions run by this
+    /// runner will have `ToolContext::exec = Some(_)` so
+    /// exec-dependent tools (`simulate_call_chain`,
+    /// `build_and_run_foundry_test`) can spawn forks. Without this
+    /// builder call, those tools return a typed error on dispatch.
+    #[must_use]
+    pub fn with_exec(mut self, exec: Arc<dyn basilisk_exec::ExecutionBackend>) -> Self {
+        self.exec = Some(exec);
+        self
+    }
+
     /// Backend identifier — recorded on the session row so a later
     /// `audit session resume` can detect model drift.
     pub fn model_identifier(&self) -> &str {
