@@ -313,14 +313,26 @@ mod tests {
     #[test]
     fn record_verdict_inserts_and_loads_back() {
         let store = BenchStore::open_in_memory().unwrap();
-        let run_id = store
-            .record("t1", None, "{}", &stub_score(), 100)
+        let run_id = store.record("t1", None, "{}", &stub_score(), 100).unwrap();
+        store
+            .record_verdict(
+                run_id,
+                "miss",
+                "reentrancy",
+                "actual_miss",
+                Some("agent missed it"),
+                200,
+            )
             .unwrap();
         store
-            .record_verdict(run_id, "miss", "reentrancy", "actual_miss", Some("agent missed it"), 200)
-            .unwrap();
-        store
-            .record_verdict(run_id, "false_positive", "Bad finding", "wrongly_flagged", None, 201)
+            .record_verdict(
+                run_id,
+                "false_positive",
+                "Bad finding",
+                "wrongly_flagged",
+                None,
+                201,
+            )
             .unwrap();
         let v = store.load_verdicts(run_id).unwrap();
         assert_eq!(v.len(), 2);
@@ -333,15 +345,20 @@ mod tests {
     #[test]
     fn record_verdict_upserts_on_repeat() {
         let store = BenchStore::open_in_memory().unwrap();
-        let run_id = store
-            .record("t1", None, "{}", &stub_score(), 100)
-            .unwrap();
+        let run_id = store.record("t1", None, "{}", &stub_score(), 100).unwrap();
         store
             .record_verdict(run_id, "miss", "reentrancy", "actual_miss", None, 200)
             .unwrap();
         // Re-review with a new verdict.
         store
-            .record_verdict(run_id, "miss", "reentrancy", "scoring_failure", Some("rework needed"), 300)
+            .record_verdict(
+                run_id,
+                "miss",
+                "reentrancy",
+                "scoring_failure",
+                Some("rework needed"),
+                300,
+            )
             .unwrap();
         let v = store.load_verdicts(run_id).unwrap();
         assert_eq!(v.len(), 1);

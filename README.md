@@ -413,7 +413,16 @@ audit bench run                             # all 5 sequentially
 audit bench history                         # newest-first run log
 audit bench score <run-id>                  # re-score against current expectations
 audit bench compare <run-a> <run-b>         # side-by-side diff
+audit bench review <run-id>                 # interactively label misses + false positives
 ```
+
+`audit bench review` walks every miss and false positive from a recorded
+run and asks the operator to label each — `actual_miss`,
+`scoring_failure`, `false_positive`, `wrongly_flagged`, or
+`in_scope_extra`. Verdicts persist in `bench_review_verdicts` so re-runs
+resume where you left off. Use `scripts/feedback-summary.sh` to see
+recurring miss-classes and the agent's self-reported limitations across
+sessions.
 
 Five targets shipped: Euler (donation + self-liquidation), Visor
 (reentrancy via owner callback), Cream (oracle manipulation),
@@ -460,6 +469,10 @@ $ audit knowledge stats
 $ audit knowledge ingest solodit --max-records 1000
 $ audit knowledge ingest swc
 $ audit knowledge ingest openzeppelin
+$ audit knowledge ingest code4rena       # set 9.6: github-based contest archive
+$ audit knowledge ingest sherlock        # set 9.6: github-based audit reports
+$ audit knowledge ingest rekt            # set 9.6: operator-curated post-mortems
+$ audit knowledge ingest trailofbits     # set 9.6: operator-curated security writeups
 $ audit knowledge ingest --all
 
 # attach engagement-specific context:
@@ -490,6 +503,24 @@ ingester reads a user-supplied JSONL dump at
 `~/.basilisk/knowledge/solodit_dump.jsonl` (one finding per line) rather
 than scraping live. See the fixture shape in
 `crates/ingest/tests/fixtures/solodit/`.
+
+**Set 9.6 ingesters.** Four additional sources joined the corpus:
+
+- `code4rena` — clones `code-423n4/<contest>-findings` repositories and
+  parses both per-finding `data/<auditor>-<sev>-<num>.md` files and
+  consolidated `report.md` shapes. Walks the `DEFAULT_CONTESTS` curated
+  list out of the box (override via `with_contests`).
+- `sherlock` — clones `sherlock-protocol/sherlock-reports` and walks
+  each audit subdirectory's `README.md` for `## Issue H-1: title`-style
+  headings.
+- `rekt` — operator-curated JSONL at
+  `~/.basilisk/knowledge/rekt_dump.jsonl` (post-mortems with loss
+  amounts, attack vectors, chain). Loss is bucketed
+  (`<1m / 1m_10m / 10m_100m / >100m`) for retrieval filtering.
+- `trailofbits` — operator-curated JSONL at
+  `~/.basilisk/knowledge/tob_dump.jsonl` covering the security-relevant
+  subset of the Trail of Bits blog (the full blog is wider; the
+  operator curates which posts are smart-contract-relevant).
 
 **Embedding providers** (configure via env or `.env`):
 

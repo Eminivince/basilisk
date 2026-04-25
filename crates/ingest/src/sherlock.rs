@@ -53,8 +53,7 @@ pub struct SherlockFindingRow {
 impl SherlockFindingRow {
     #[must_use]
     pub fn into_ingest_record(self) -> IngestRecord {
-        let mut tags: Vec<String> =
-            vec![format!("severity:{}", self.severity.to_lowercase())];
+        let mut tags: Vec<String> = vec![format!("severity:{}", self.severity.to_lowercase())];
         if let Some(c) = &self.category {
             tags.push(format!("category:{}", c.to_lowercase()));
         }
@@ -148,18 +147,20 @@ impl Ingester for SherlockIngester {
             .await
         {
             Ok(r) => r,
-            Err(basilisk_git::GitError::RefNotFound { .. }) => {
-                cache
-                    .fetch(
-                        SHERLOCK_OWNER,
-                        SHERLOCK_REPO,
-                        Some(GitRef::Branch("master".into())),
-                        opts,
-                    )
-                    .await
-                    .map_err(|e| IngestError::Source(format!("cloning sherlock-reports: {e}")))?
+            Err(basilisk_git::GitError::RefNotFound { .. }) => cache
+                .fetch(
+                    SHERLOCK_OWNER,
+                    SHERLOCK_REPO,
+                    Some(GitRef::Branch("master".into())),
+                    opts,
+                )
+                .await
+                .map_err(|e| IngestError::Source(format!("cloning sherlock-reports: {e}")))?,
+            Err(e) => {
+                return Err(IngestError::Source(format!(
+                    "cloning sherlock-reports: {e}"
+                )))
             }
-            Err(e) => return Err(IngestError::Source(format!("cloning sherlock-reports: {e}"))),
         };
 
         let rows = scan_sherlock_repo(&fetched.working_tree);
@@ -184,9 +185,7 @@ impl Ingester for SherlockIngester {
 
         for row in rows.into_iter().take(max) {
             let id = row.id.clone();
-            if options.incremental
-                && prior.cursor.as_deref().is_some_and(|c| id.as_str() <= c)
-            {
+            if options.incremental && prior.cursor.as_deref().is_some_and(|c| id.as_str() <= c) {
                 report.records_skipped += 1;
                 continue;
             }

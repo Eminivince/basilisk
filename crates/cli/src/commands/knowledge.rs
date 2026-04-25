@@ -28,8 +28,8 @@ use basilisk_git::RepoCache;
 use basilisk_github::GithubClient;
 use basilisk_ingest::{
     Code4renaIngester, IngestOptions, IngestProgress, Ingester, OzAdvisoriesIngester,
-    ProtocolIngester, ProtocolSource, RektIngester, SherlockIngester, SoloditIngester,
-    SwcIngester, TobBlogIngester,
+    ProtocolIngester, ProtocolSource, RektIngester, SherlockIngester, SoloditIngester, SwcIngester,
+    TobBlogIngester,
 };
 use basilisk_knowledge::{Correction, FindingId, KnowledgeBase, SearchFilters, UserVerdict};
 use basilisk_vector::{FileVectorStore, VectorStore};

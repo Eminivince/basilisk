@@ -214,7 +214,12 @@ impl Ingester for Code4renaIngester {
             // Try `main` first, fall back to `master`. Both
             // appear across the contest-archive history.
             let fetched = match cache
-                .fetch("code-423n4", &repo_name, Some(GitRef::Branch("main".into())), opts.clone())
+                .fetch(
+                    "code-423n4",
+                    &repo_name,
+                    Some(GitRef::Branch("main".into())),
+                    opts.clone(),
+                )
                 .await
             {
                 Ok(r) => r,
@@ -270,9 +275,7 @@ impl Ingester for Code4renaIngester {
 
         for row in all_rows {
             let id = row.id.clone();
-            if options.incremental
-                && prior.cursor.as_deref().is_some_and(|c| id.as_str() <= c)
-            {
+            if options.incremental && prior.cursor.as_deref().is_some_and(|c| id.as_str() <= c) {
                 report.records_skipped += 1;
                 continue;
             }
@@ -608,16 +611,8 @@ Low quality issue.
         // Shape A: per-finding files in data/
         let data = root.join("data");
         fs::create_dir(&data).unwrap();
-        fs::write(
-            data.join("alice-H-001.md"),
-            "# A bug\n\nbody one",
-        )
-        .unwrap();
-        fs::write(
-            data.join("bob-M-002.md"),
-            "# Another bug\n\nbody two",
-        )
-        .unwrap();
+        fs::write(data.join("alice-H-001.md"), "# A bug\n\nbody one").unwrap();
+        fs::write(data.join("bob-M-002.md"), "# Another bug\n\nbody two").unwrap();
         // Shape B: report.md
         fs::write(
             root.join("report.md"),

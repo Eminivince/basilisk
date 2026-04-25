@@ -691,12 +691,23 @@ fn run_review(args: &ReviewArgs) -> Result<()> {
             miss.severity_min,
             miss.must_mention,
         );
-        let verdict = prompt_verdict(&stdin, MISS_VERDICTS, "    [a]ctual_miss / [s]coring_failure / s[k]ip")?;
+        let verdict = prompt_verdict(
+            &stdin,
+            MISS_VERDICTS,
+            "    [a]ctual_miss / [s]coring_failure / s[k]ip",
+        )?;
         if verdict == "skip" {
             continue;
         }
         let note = prompt_note(&stdin)?;
-        store.record_verdict(args.run_id, "miss", &miss.class, &verdict, note.as_deref(), now_ms)?;
+        store.record_verdict(
+            args.run_id,
+            "miss",
+            &miss.class,
+            &verdict,
+            note.as_deref(),
+            now_ms,
+        )?;
         println!("    recorded: {verdict}");
     }
 
@@ -705,7 +716,10 @@ fn run_review(args: &ReviewArgs) -> Result<()> {
     if stored_score.false_positives.is_empty() {
         println!("(no false positives to review)");
     } else {
-        println!("--- false positives ({}) ---", stored_score.false_positives.len());
+        println!(
+            "--- false positives ({}) ---",
+            stored_score.false_positives.len()
+        );
     }
     for (idx, fp) in stored_score.false_positives.iter().enumerate() {
         let key = ("false_positive".to_string(), fp.title.clone());
@@ -761,18 +775,17 @@ fn run_review(args: &ReviewArgs) -> Result<()> {
     Ok(())
 }
 
-fn prompt_verdict(
-    stdin: &std::io::Stdin,
-    options: &[(&str, &str)],
-    menu: &str,
-) -> Result<String> {
+fn prompt_verdict(stdin: &std::io::Stdin, options: &[(&str, &str)], menu: &str) -> Result<String> {
     use std::io::Write as _;
     loop {
         println!("{menu}");
         print!("    > ");
         std::io::stdout().flush().ok();
         let mut line = String::new();
-        stdin.lock().read_line(&mut line).context("reading verdict")?;
+        stdin
+            .lock()
+            .read_line(&mut line)
+            .context("reading verdict")?;
         let key = line.trim().to_ascii_lowercase();
         if let Some((_, verdict)) = options.iter().find(|(k, _)| *k == key) {
             return Ok((*verdict).to_string());
@@ -803,7 +816,9 @@ fn print_verdict_tally(
     let mut counts: std::collections::BTreeMap<(String, String), u32> =
         std::collections::BTreeMap::new();
     for v in verdicts {
-        *counts.entry((v.kind.clone(), v.verdict.clone())).or_default() += 1;
+        *counts
+            .entry((v.kind.clone(), v.verdict.clone()))
+            .or_default() += 1;
     }
     if counts.is_empty() {
         println!("no verdicts recorded.");
@@ -819,7 +834,8 @@ fn print_verdict_tally(
         .sum();
     if scoring_failures > 0 {
         let expected = stored_score.matches.len() + stored_score.misses.len();
-        let adjusted_matches = u32::try_from(stored_score.matches.len()).unwrap_or(u32::MAX) + scoring_failures;
+        let adjusted_matches =
+            u32::try_from(stored_score.matches.len()).unwrap_or(u32::MAX) + scoring_failures;
         #[allow(clippy::cast_precision_loss)]
         let adjusted_coverage = if expected > 0 {
             f32::from(u16::try_from(adjusted_matches).unwrap_or(u16::MAX)) / expected as f32 * 100.0
