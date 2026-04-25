@@ -23,7 +23,7 @@ pub mod pricing;
 pub(crate) mod sse;
 pub mod types;
 
-pub use anthropic::{AnthropicBackend, DEFAULT_MODEL};
+pub use anthropic::{AnthropicBackend, DEFAULT_MODEL, DEFAULT_VULN_MODEL};
 pub use backend::{collect_stream, LlmBackend};
 pub use error::LlmError;
 pub use openai_compat::{OpenAICompatibleBackend, Provider};

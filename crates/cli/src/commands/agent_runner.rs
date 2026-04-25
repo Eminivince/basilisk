@@ -32,7 +32,7 @@ use basilisk_git::RepoCache;
 use basilisk_github::GithubClient;
 use basilisk_llm::{
     AnthropicBackend, LlmBackend, Message, MessageRole, OpenAICompatibleBackend, Provider,
-    DEFAULT_MODEL,
+    DEFAULT_MODEL, DEFAULT_VULN_MODEL,
 };
 use clap::{Args, ValueEnum};
 use sha2::{Digest, Sha256};
@@ -215,17 +215,20 @@ pub struct AgentFlags {
     #[arg(long = "no-stream", id = "agent_no_stream", env = "BASILISK_NO_STREAM")]
     pub no_stream: bool,
 
-    /// Set 9 vulnerability-reasoning mode. Swaps the registry to
+    /// Vulnerability-reasoning mode. Swaps the registry to
     /// `vuln_registry` (25 tools: recon + knowledge + analytical +
     /// self-critique), swaps the default system prompt to
-    /// `vuln_v1.md`, bumps the default turn budget to 100, and wires
-    /// an anvil-backed execution backend for `simulate_call_chain`
-    /// and `build_and_run_foundry_test`. Requires Foundry on PATH and
-    /// a reachable mainnet archive RPC (see `ALCHEMY_API_KEY` /
-    /// `MAINNET_RPC_URL` in `.env.example`). Knowledge-base retrieval
-    /// is wired when an embedding provider is configured; missing
-    /// knowledge degrades the tools to typed errors but the run
-    /// continues.
+    /// `vuln_v2.md` (Set 9.5 — strengthened structured-recording
+    /// discipline), bumps the default turn budget to 100, defaults
+    /// the model to Claude Sonnet 4.6 (cheaper than Opus; opt into
+    /// Opus via `--model claude-opus-4-7` for high-stakes targets),
+    /// and wires an anvil-backed execution backend for
+    /// `simulate_call_chain` and `build_and_run_foundry_test`.
+    /// Requires Foundry on PATH and a reachable mainnet archive RPC
+    /// (see `ALCHEMY_API_KEY` / `MAINNET_RPC_URL` in `.env.example`).
+    /// Knowledge-base retrieval is wired when an embedding provider
+    /// is configured; missing knowledge degrades the tools to typed
+    /// errors but the run continues.
     #[arg(long, id = "agent_vuln")]
     pub vuln: bool,
 }
@@ -509,13 +512,28 @@ fn build_backend(flags: &AgentFlags, config: &Config) -> Result<Arc<dyn LlmBacke
         }
     }
 
+    // Set 9.5 / CP9.5.2: --vuln defaults to Sonnet, recon defaults to
+    // Opus. Operators override via --model. Cost dynamics on a typical
+    // vuln run with Opus are ~$25; with Sonnet, ~$3-5 — calibrating
+    // whether the quality tradeoff is worth keeping Sonnet as default.
+    let anthropic_default = if flags.vuln {
+        DEFAULT_VULN_MODEL
+    } else {
+        DEFAULT_MODEL
+    };
+    let openrouter_default = if flags.vuln {
+        "anthropic/claude-sonnet-4-6"
+    } else {
+        "anthropic/claude-opus-4-7"
+    };
+
     match flags.provider {
         ProviderKind::Anthropic => {
             let api_key = resolve_key(flags, config, "ANTHROPIC_API_KEY", Some("anthropic"))
                 .context(
                 "Anthropic API key is not set — export ANTHROPIC_API_KEY (or --llm-api-key-env)",
             )?;
-            let model = flags.model.as_deref().unwrap_or(DEFAULT_MODEL);
+            let model = flags.model.as_deref().unwrap_or(anthropic_default);
             let backend = AnthropicBackend::with_model(api_key, model)
                 .context("initialising Anthropic backend")?;
             Ok(Arc::new(backend))
@@ -525,10 +543,7 @@ fn build_backend(flags: &AgentFlags, config: &Config) -> Result<Arc<dyn LlmBacke
                 .context(
                 "OpenRouter API key is not set — export OPENROUTER_API_KEY (or --llm-api-key-env)",
             )?;
-            let model = flags
-                .model
-                .as_deref()
-                .unwrap_or("anthropic/claude-opus-4-7");
+            let model = flags.model.as_deref().unwrap_or(openrouter_default);
             let backend = OpenAICompatibleBackend::with_provider_and_model(
                 Provider::OpenRouter,
                 api_key,

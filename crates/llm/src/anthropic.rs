@@ -32,6 +32,12 @@ const API_VERSION: &str = "2023-06-01";
 /// Default model — swap to a dated variant when pinning is needed.
 pub const DEFAULT_MODEL: &str = "claude-opus-4-7";
 
+/// Default model for `--vuln`-mode sessions — Claude Sonnet 4.6
+/// (Set 9.5). Cheaper and faster than Opus; the calibration data
+/// (`scripts/calibrate-vuln.sh`) informs whether to keep it.
+/// Operators opt into Opus via `--model claude-opus-4-7`.
+pub const DEFAULT_VULN_MODEL: &str = "claude-sonnet-4-6";
+
 /// Anthropic Messages API backend.
 #[derive(Clone, Debug)]
 pub struct AnthropicBackend {
