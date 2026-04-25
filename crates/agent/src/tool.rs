@@ -10,13 +10,17 @@
 //! next turn, or a typed error that lets the agent decide whether to
 //! retry / work around / give up.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use async_trait::async_trait;
 use basilisk_core::Config;
 use basilisk_git::RepoCache;
 use basilisk_github::GithubClient;
 use basilisk_llm::ToolDefinition;
+use basilisk_scratchpad::{Scratchpad, ScratchpadStore};
 use serde::{Deserialize, Serialize};
 
 /// A stable session identifier.
@@ -74,6 +78,19 @@ pub struct ToolContext {
     /// filter the `protocols` collection. `None` disables
     /// engagement-scoped filtering.
     pub engagement_id: Option<String>,
+    /// Live in-memory scratchpad shared with the runner. The three
+    /// scratchpad tools mutate through this handle; the runner
+    /// re-renders the compact form into the system prompt each
+    /// turn and persists via [`Self::scratchpad_store`].
+    ///
+    /// `None` means the session was spawned without working-memory
+    /// wiring (tests, offline smoke-checks); scratchpad tools
+    /// return a typed error rather than crashing.
+    pub scratchpad: Option<Arc<Mutex<Scratchpad>>>,
+    /// Persistence handle for the scratchpad. Independent of
+    /// [`Self::scratchpad`] so tools can mutate in-memory and the
+    /// runner flushes to disk at turn boundaries.
+    pub scratchpad_store: Option<Arc<ScratchpadStore>>,
 }
 
 impl ToolContext {
@@ -93,6 +110,8 @@ impl ToolContext {
             knowledge: None,
             engagement_id: None,
             session_id: SessionId::new("test-session"),
+            scratchpad: None,
+            scratchpad_store: None,
         }
     }
 }

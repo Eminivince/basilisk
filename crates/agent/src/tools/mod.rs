@@ -21,6 +21,7 @@ pub mod list_directory;
 pub mod read_file;
 pub mod resolve_onchain_contract;
 pub mod resolve_onchain_system;
+pub mod scratchpad_tools;
 pub mod static_call;
 
 pub use analyze_project::AnalyzeProject;
@@ -36,13 +37,14 @@ pub use list_directory::ListDirectory;
 pub use read_file::ReadFile;
 pub use resolve_onchain_contract::ResolveOnchainContract;
 pub use resolve_onchain_system::ResolveOnchainSystem;
+pub use scratchpad_tools::{ScratchpadHistory, ScratchpadRead, ScratchpadWrite};
 pub use static_call::StaticCall;
 
 use crate::tool::ToolRegistry;
 
 /// Build the standard recon tool set.
 ///
-/// Tools included (11):
+/// Tools included (14):
 ///  - `classify_target`
 ///  - `resolve_onchain_contract`
 ///  - `resolve_onchain_system`
@@ -54,6 +56,14 @@ use crate::tool::ToolRegistry;
 ///  - `get_storage_slot`
 ///  - `static_call`
 ///  - `finalize_report`
+///  - `scratchpad_read`
+///  - `scratchpad_write`
+///  - `scratchpad_history`
+///
+/// The three scratchpad tools only function when the session was
+/// wired with working memory — see [`crate::AgentRunner::with_scratchpad`]
+/// (landing in Set 8 CP8.4). They degrade to a typed error on
+/// sessions without scratchpad, matching the knowledge-tools shape.
 #[must_use]
 pub fn standard_registry() -> ToolRegistry {
     let mut reg = ToolRegistry::new();
@@ -68,6 +78,9 @@ pub fn standard_registry() -> ToolRegistry {
     reg.register(Arc::new(GetStorageSlot));
     reg.register(Arc::new(StaticCall));
     reg.register(Arc::new(FinalizeReport));
+    reg.register(Arc::new(ScratchpadRead));
+    reg.register(Arc::new(ScratchpadWrite));
+    reg.register(Arc::new(ScratchpadHistory));
     reg
 }
 
@@ -101,9 +114,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn standard_registry_has_eleven_tools() {
+    fn standard_registry_has_fourteen_tools() {
         let reg = standard_registry();
-        assert_eq!(reg.len(), 11);
+        assert_eq!(reg.len(), 14);
     }
 
     #[test]
@@ -126,6 +139,9 @@ mod tests {
             "read_file",
             "resolve_onchain_contract",
             "resolve_onchain_system",
+            "scratchpad_history",
+            "scratchpad_read",
+            "scratchpad_write",
             "static_call",
         ];
         let actual: Vec<String> = reg.names();
@@ -153,9 +169,9 @@ mod tests {
     }
 
     #[test]
-    fn knowledge_enhanced_registry_has_fifteen_tools() {
+    fn knowledge_enhanced_registry_has_eighteen_tools() {
         let reg = knowledge_enhanced_registry();
-        assert_eq!(reg.len(), 15);
+        assert_eq!(reg.len(), 18);
     }
 
     #[test]

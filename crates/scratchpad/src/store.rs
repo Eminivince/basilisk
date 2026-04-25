@@ -318,6 +318,23 @@ impl ScratchpadStore {
         }
     }
 
+    /// Insert a bare row into `sessions` so scratchpad FK inserts
+    /// succeed in tests + when the agent crate wires a scratchpad
+    /// for a session that was created outside this crate. No-op on
+    /// duplicate ids.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ScratchpadError::Sqlite`] on write failure.
+    pub fn seed_session_for_tests(&self, session_id: &str) -> Result<(), ScratchpadError> {
+        let conn = self.conn()?;
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions (id) VALUES (?1)",
+            params![session_id],
+        )?;
+        Ok(())
+    }
+
     /// List (`revision_index`, `at_ms`) pairs for a session, newest
     /// first. Used by `audit session scratchpad history` and the
     /// `scratchpad_history` agent tool.

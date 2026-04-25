@@ -62,6 +62,13 @@ pub struct AgentRunner {
     /// `search_protocol_docs` can filter the `protocols`
     /// collection. `None` disables engagement scoping.
     pub(crate) engagement_id: Option<String>,
+    /// Optional scratchpad persistence handle. When set, every
+    /// session initialises (or loads) a [`Scratchpad`], shares it
+    /// via `ToolContext::scratchpad` as `Arc<Mutex<_>>`, and
+    /// re-renders the compact form into the per-turn system
+    /// prompt. `None` runs without working memory — scratchpad
+    /// tools return a typed error on dispatch.
+    pub(crate) scratchpad_store: Option<Arc<basilisk_scratchpad::ScratchpadStore>>,
 }
 
 impl AgentRunner {
@@ -89,7 +96,23 @@ impl AgentRunner {
             budget,
             knowledge: None,
             engagement_id: None,
+            scratchpad_store: None,
         }
+    }
+
+    /// Builder: attach a scratchpad store. Sessions run by this
+    /// runner will create (or load on resume) a [`Scratchpad`],
+    /// share it with tools via `ToolContext`, and re-render its
+    /// compact form into the system prompt each turn.
+    ///
+    /// [`Scratchpad`]: basilisk_scratchpad::Scratchpad
+    #[must_use]
+    pub fn with_scratchpad(
+        mut self,
+        store: Arc<basilisk_scratchpad::ScratchpadStore>,
+    ) -> Self {
+        self.scratchpad_store = Some(store);
+        self
     }
 
     /// Builder: attach a knowledge base. The runner's
@@ -139,9 +162,82 @@ impl AgentRunner {
         &self.system_prompt
     }
 
+    /// Initialize the scratchpad for this session. Loads existing
+    /// state on resume; creates a fresh scratchpad otherwise.
+    /// Returns `None` when the runner was built without
+    /// [`Self::with_scratchpad`] — all scratchpad tools will then
+    /// return a typed error when dispatched.
+    pub(crate) fn init_scratchpad_for_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Option<Arc<std::sync::Mutex<basilisk_scratchpad::Scratchpad>>> {
+        let store = self.scratchpad_store.as_ref()?;
+        // Make sure the sessions FK is satisfied — the agent's own
+        // SessionStore has already inserted this row, but if the
+        // scratchpad store sits on a separate DB handle we seed it
+        // defensively. No-op when already present.
+        let _ = store.seed_session_for_tests(session_id.as_str());
+        let loaded = match store.load(session_id.as_str()) {
+            Ok(Some(sp)) => sp,
+            Ok(None) => match store.create(session_id.as_str()) {
+                Ok(sp) => sp,
+                Err(e) => {
+                    warn!(
+                        session = %session_id,
+                        error = %e,
+                        "failed to create scratchpad — running without working memory",
+                    );
+                    return None;
+                }
+            },
+            Err(e) => {
+                warn!(
+                    session = %session_id,
+                    error = %e,
+                    "failed to load scratchpad — running without working memory",
+                );
+                return None;
+            }
+        };
+        Some(Arc::new(std::sync::Mutex::new(loaded)))
+    }
+
+    /// Compose the per-turn system prompt: the runner's fixed
+    /// preamble plus a freshly-rendered compact scratchpad block
+    /// when working memory is enabled.
+    fn compose_system_prompt(
+        &self,
+        scratchpad: Option<&Arc<std::sync::Mutex<basilisk_scratchpad::Scratchpad>>>,
+    ) -> String {
+        let Some(sp) = scratchpad else {
+            return self.system_prompt.clone();
+        };
+        let compact = match sp.lock() {
+            Ok(g) => basilisk_scratchpad::render_compact(&g),
+            Err(_) => "<scratchpad unavailable: lock poisoned>".into(),
+        };
+        format!(
+            "{base}\n\n# Your working memory\n\n\
+             You maintain a structured working document — a scratchpad — across this session. \
+             The current state is below. Use `scratchpad_write` to update it as you learn \
+             (set_prose for system_understanding; append_item for hypotheses, open questions, \
+             investigations, limitations_noticed, suspicions_not_yet_confirmed; update_item \
+             as evidence accumulates; create_custom_section for engagement-specific concerns). \
+             Use `scratchpad_read` to re-check sections you haven't touched recently. Use \
+             `scratchpad_history` to review how an item evolved.\n\n{compact}",
+            base = self.system_prompt,
+        )
+    }
+
     /// Build the [`ToolContext`] for one in-flight session. Called by
     /// the loop (`CP5c`); exposed `pub(crate)` so tests can drive it.
-    pub(crate) fn build_context(&self, session_id: SessionId) -> ToolContext {
+    /// `scratchpad` is the live in-memory handle; `None` skips
+    /// scratchpad wiring for this session.
+    pub(crate) fn build_context(
+        &self,
+        session_id: SessionId,
+        scratchpad: Option<Arc<std::sync::Mutex<basilisk_scratchpad::Scratchpad>>>,
+    ) -> ToolContext {
         ToolContext {
             config: Arc::clone(&self.config),
             github: Arc::clone(&self.github),
@@ -149,6 +245,8 @@ impl AgentRunner {
             knowledge: self.knowledge.clone(),
             engagement_id: self.engagement_id.clone(),
             session_id,
+            scratchpad,
+            scratchpad_store: self.scratchpad_store.clone(),
         }
     }
 
@@ -369,7 +467,11 @@ impl AgentRunner {
         started_at: SystemTime,
         observer: &dyn AgentObserver,
     ) -> Result<AgentOutcome, AgentError> {
-        let context = self.build_context(session_id.clone());
+        // Create (or load) the scratchpad up-front, before the first
+        // context is built. Resume-path loading happens here too: if
+        // the store already has a row, use it; else initialize fresh.
+        let scratchpad_handle = self.init_scratchpad_for_session(&session_id);
+        let context = self.build_context(session_id.clone(), scratchpad_handle.clone());
         // One-shot pricing diagnostic — warns when cost enforcement is
         // silently disabled. Fires at session start so operators see
         // it before any tokens are spent.
@@ -392,7 +494,7 @@ impl AgentRunner {
             }
 
             let request = CompletionRequest {
-                system: self.system_prompt.clone(),
+                system: self.compose_system_prompt(scratchpad_handle.as_ref()),
                 messages: history.clone(),
                 tools: self.registry.definitions(),
                 max_tokens: MAX_TOKENS_PER_TURN,
@@ -404,6 +506,11 @@ impl AgentRunner {
                 // to `Auto`.
                 tool_choice: force_tool_choice.take().unwrap_or_default(),
                 stop_sequences: Vec::new(),
+                // The scratchpad block mutates between turns, so the
+                // system prompt's cache gets invalidated whenever the
+                // agent writes. The base prompt + tool catalogue are
+                // still worth caching for the turns between writes —
+                // Anthropic caches the longest shared prefix.
                 cache_system_prompt: true,
             };
 
@@ -860,7 +967,7 @@ mod tests {
     fn runner_exposes_basic_metadata() {
         let runner = build_runner("claude-opus-4-7", Budget::default());
         assert_eq!(runner.model_identifier(), "claude-opus-4-7");
-        assert_eq!(runner.tool_count(), 11);
+        assert_eq!(runner.tool_count(), 14);
         assert_eq!(runner.budget(), Budget::default());
     }
 
@@ -868,7 +975,7 @@ mod tests {
     fn build_context_threads_session_id_through() {
         let runner = build_runner("claude-opus-4-7", Budget::default());
         let id = SessionId::new("abc-123");
-        let ctx = runner.build_context(id.clone());
+        let ctx = runner.build_context(id.clone(), None);
         assert_eq!(ctx.session_id, id);
     }
 
