@@ -231,9 +231,25 @@ impl EmbeddingProvider for BatchingProvider {
         self.inner.max_tokens_per_input()
     }
     fn max_batch_size(&self) -> usize {
-        // Auto-split erases the inner cap from the caller's view —
-        // the wrapper accepts any size and splits under the hood.
-        usize::MAX
+        // Forward the inner cap. Older versions returned usize::MAX
+        // here to "auto-split under the hood" — but that hid the
+        // provider's real per-batch limit from token-aware ingester
+        // batchers, which would happily pack thousands of chunks
+        // into one logical batch and then crash inside the inner
+        // call. Surfacing the real cap lets ingesters pack batches
+        // honestly; the wrapper still re-splits as a safety net.
+        self.inner.max_batch_size()
+    }
+
+    fn max_tokens_per_batch(&self) -> usize {
+        // Same reasoning as max_batch_size: forward the inner cap so
+        // upstream batchers see the real per-call token limit
+        // (Voyage 120k, OpenAI 300k). The trait default
+        // (max_tokens_per_input * max_batch_size) is way looser than
+        // the actual provider cap — Voyage would default to 16k *
+        // 128 = 2M, well over the 120k server-side limit. Forwarding
+        // is what keeps ingester pack_batches correct.
+        self.inner.max_tokens_per_batch()
     }
 
     async fn embed(&self, inputs: &[EmbeddingInput]) -> Result<Vec<Embedding>, EmbeddingError> {
