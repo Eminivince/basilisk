@@ -585,9 +585,34 @@ impl Ingester for Code4renaIngester {
         } else {
             self.contests.len()
         };
-        for contest_slug in self.contests.iter().take(max_contests_to_visit) {
+        let total_contests = max_contests_to_visit.min(self.contests.len());
+        for (i, contest_slug) in self
+            .contests
+            .iter()
+            .take(max_contests_to_visit)
+            .enumerate()
+        {
             if all_rows.len() >= max {
                 break;
+            }
+            // Per-contest progress line so cache-hit runs (where
+            // basilisk_git stays silent) still show the loop is alive.
+            // Goes to the same progress callback the embedding phase
+            // uses, plus a tracing line for log files.
+            tracing::info!(
+                contest = %contest_slug,
+                index = i + 1,
+                total = total_contests,
+                rows_so_far = all_rows.len(),
+                "scanning contest",
+            );
+            if let Some(cb) = &options.progress {
+                cb(IngestProgress {
+                    records_scanned: all_rows.len(),
+                    records_upserted: 0,
+                    records_skipped: 0,
+                    embedding_tokens_used: 0,
+                });
             }
             let repo_name = format!("{contest_slug}-findings");
             let opts = FetchOptions {
