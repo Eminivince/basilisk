@@ -214,7 +214,11 @@ async fn open_store() -> Result<Arc<FileVectorStore>> {
         .context("opening knowledge store")
 }
 
-async fn open_kb(config: &Config) -> Result<KnowledgeBase> {
+/// Open a `KnowledgeBase` against the configured store + embedding
+/// provider. `pub(crate)` so `commands::agent_runner` can reuse it
+/// when `--vuln` is requested and the knowledge retrieval tools
+/// need to be wired.
+pub(crate) async fn open_kb(config: &Config) -> Result<KnowledgeBase> {
     let store = open_store().await?;
     let embeddings = build_embeddings(config)?;
     Ok(KnowledgeBase::new(

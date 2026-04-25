@@ -8,7 +8,8 @@ use basilisk_logging::LogFormat;
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    cache::CacheArgs, knowledge::KnowledgeCmd, recon::ReconArgs, session::SessionCmd,
+    bench::BenchCmd, cache::CacheArgs, knowledge::KnowledgeCmd, recon::ReconArgs,
+    session::SessionCmd,
 };
 
 #[derive(Debug, Parser)]
@@ -47,6 +48,10 @@ enum Command {
     Knowledge(KnowledgeCmd),
     /// Inspect and manage Basilisk's on-disk cache.
     Cache(CacheArgs),
+    /// Set 9 benchmark harness — list/show/run the five calibration
+    /// targets and review scored runs.
+    #[command(subcommand)]
+    Bench(BenchCmd),
 }
 
 #[tokio::main]
@@ -76,5 +81,6 @@ async fn main() -> Result<()> {
         Command::Session(cmd) => commands::session::run(cmd, &config).await,
         Command::Knowledge(cmd) => commands::knowledge::run(cmd, &config).await,
         Command::Cache(args) => commands::cache::run(args).await,
+        Command::Bench(cmd) => commands::bench::run(cmd, &config).await,
     }
 }

@@ -17,9 +17,11 @@ path = "src/main.rs"
 
 [dependencies]
 basilisk-agent = { workspace = true }
+basilisk-bench = { workspace = true }
 basilisk-cache = { workspace = true }
 basilisk-core = { workspace = true }
 basilisk-embeddings = { workspace = true }
+basilisk-exec = { workspace = true }
 basilisk-git = { workspace = true }
 basilisk-github = { workspace = true }
 basilisk-ingest = { workspace = true }

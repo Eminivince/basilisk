@@ -26,4 +26,4 @@ pub use error::BenchError;
 pub use score::{score, BenchmarkScore, FindingMatch};
 pub use store::BenchStore;
 pub use targets::all_targets;
-pub use types::{BenchmarkRun, BenchmarkTarget, ExpectedFinding, Severity};
+pub use types::{AgentFindingSummary, BenchmarkRun, BenchmarkTarget, ExpectedFinding, Severity};

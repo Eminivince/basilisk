@@ -79,7 +79,7 @@ pub enum ProviderKind {
 /// The user-facing CLI names stay clean (`--model`, `--max-turns`,
 /// `--agent-output`, …). Rust field names are free to be whatever
 /// reads best.
-#[derive(Debug, Args, Default)]
+#[derive(Debug, Args, Default, Clone)]
 pub struct AgentFlags {
     /// Free-form note attached to the session row.
     #[arg(long = "session-note", id = "agent_session_note", value_name = "TEXT")]
@@ -214,13 +214,100 @@ pub struct AgentFlags {
     /// Suppress the live progress stream on stderr.
     #[arg(long = "no-stream", id = "agent_no_stream", env = "BASILISK_NO_STREAM")]
     pub no_stream: bool,
+
+    /// Set 9 vulnerability-reasoning mode. Swaps the registry to
+    /// `vuln_registry` (25 tools: recon + knowledge + analytical +
+    /// self-critique), swaps the default system prompt to
+    /// `vuln_v1.md`, bumps the default turn budget to 100, and wires
+    /// an anvil-backed execution backend for `simulate_call_chain`
+    /// and `build_and_run_foundry_test`. Requires Foundry on PATH and
+    /// a reachable mainnet archive RPC (see `ALCHEMY_API_KEY` /
+    /// `MAINNET_RPC_URL` in `.env.example`). Knowledge-base retrieval
+    /// is wired when an embedding provider is configured; missing
+    /// knowledge degrades the tools to typed errors but the run
+    /// continues.
+    #[arg(long, id = "agent_vuln")]
+    pub vuln: bool,
 }
 
 /// Entry point: run the agent against `target` using `flags`.
 ///
 /// Called from `commands::recon::run` when `--agent` is set.
+/// Variant of [`run_agent`] that returns the `AgentOutcome` instead
+/// of just rendering it. Used by `audit bench run` which needs the
+/// outcome to score + persist.
+pub async fn run_agent_with_outcome(
+    target: &str,
+    flags: &AgentFlags,
+    config: &Config,
+) -> Result<AgentOutcome> {
+    let (mut runner, db_path) = build_runner(flags, config)?;
+
+    if flags.vuln {
+        match super::knowledge::open_kb(config).await {
+            Ok(kb) => {
+                runner = runner.with_knowledge(Arc::new(kb));
+                eprintln!("  vuln-mode: knowledge base attached");
+            }
+            Err(e) => {
+                eprintln!(
+                    "  vuln-mode: knowledge base unavailable — knowledge tools will \
+                     return errors but run continues ({e})"
+                );
+            }
+        }
+        if let Err(e) = basilisk_exec::AnvilForkBackend::require_binary() {
+            eprintln!("  vuln-mode: anvil binary check — {e}");
+        }
+    }
+
+    eprintln!(
+        "→ agent running  target={:?}  model={}  budget={:?}",
+        target,
+        runner.model_identifier(),
+        runner.budget(),
+    );
+    eprintln!("  session db: {}", db_path.display());
+
+    let pretty = PrettyObserver::new();
+    let noop = NoopObserver;
+    let observer: &dyn AgentObserver = if flags.no_stream { &noop } else { &pretty };
+
+    let outcome = runner
+        .run_with_observer(
+            target.to_string(),
+            build_initial_message(target, flags.note.as_deref()),
+            flags.note.clone(),
+            observer,
+        )
+        .await
+        .context("agent run failed")?;
+    render_outcome(&outcome, flags.output);
+    Ok(outcome)
+}
+
 pub async fn run_agent(target: &str, flags: &AgentFlags, config: &Config) -> Result<()> {
-    let (runner, db_path) = build_runner(flags, config)?;
+    let (mut runner, db_path) = build_runner(flags, config)?;
+
+    // Vuln-mode knowledge wiring happens here (async) so the whole
+    // build path can stay sync in build_runner.
+    if flags.vuln {
+        match super::knowledge::open_kb(config).await {
+            Ok(kb) => {
+                runner = runner.with_knowledge(Arc::new(kb));
+                eprintln!("  vuln-mode: knowledge base attached");
+            }
+            Err(e) => {
+                eprintln!(
+                    "  vuln-mode: knowledge base unavailable — knowledge tools will \
+                     return errors but run continues ({e})"
+                );
+            }
+        }
+        if let Err(e) = basilisk_exec::AnvilForkBackend::require_binary() {
+            eprintln!("  vuln-mode: anvil binary check — {e}");
+        }
+    }
 
     eprintln!(
         "→ agent running  target={:?}  model={}  budget={:?}",
@@ -481,6 +568,15 @@ fn non_empty_env(key: &str) -> Option<String> {
 
 fn build_budget(flags: &AgentFlags) -> Budget {
     let mut b = Budget::default();
+    // Vuln-mode defaults are more generous — Set 9's vuln reasoning
+    // expects 30-100 turns on the Investigation phase alone. These
+    // are ceilings; operators override via --max-*.
+    if flags.vuln {
+        b.max_turns = 100;
+        b.max_tokens_total = 2_000_000;
+        b.max_cost_cents = 5_000; // $50
+        b.max_duration = Duration::from_secs(60 * 60); // 1h
+    }
     if let Some(v) = flags.max_turns {
         b.max_turns = v;
     }
@@ -738,6 +834,7 @@ mod tests {
             max_duration_secs: None,
             output: OutputFormat::Pretty,
             no_stream: false,
+            vuln: false,
         }
     }
 
