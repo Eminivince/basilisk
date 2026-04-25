@@ -3,10 +3,14 @@
 An AI-driven smart-contract auditor that reasons about protocols end-to-end —
 from deployed bytecode to GitHub source, with cross-contract graph awareness.
 
-**Status:** Phase 2 complete — tool surface shipped. Given a GitHub URL, a
-deployed address, or a local path, Basilisk resolves the full system:
-bytecode, verified source, proxy structure, upgrade history, and a typed
-cross-contract graph. The AI reasoning layer (Phase 3) is in progress.
+**Status:** Phase 4 open — vulnerability reasoning + PoC synthesis +
+evaluation harness shipped (Set 9 / 9.5). Given a GitHub URL, a deployed
+address, or a local path, Basilisk runs an LLM-driven tool-use loop that
+resolves the system, hypothesizes vulnerabilities, simulates against a
+forked mainnet, optionally writes and runs a Foundry test as proof, and
+records suspicions and limitations to a queryable knowledge base. See
+`reports/SET-9.md` and `reports/wave-launcher-trial.md` for honest
+calibration data.
 
 ## What it does today
 
@@ -48,7 +52,7 @@ reachable via `RPC_URL_<CHAIN>` overrides.
 ## Roadmap
 
 - **Phase 3: the agent (in progress).** LLM-driven recon via
-  `audit recon <target> --agent` is wired end-to-end: model-agnostic
+  `audit recon <target>` is wired end-to-end: model-agnostic
   backend (Anthropic shipped), eleven tool definitions covering the
   Phase 1–2 ingestion surface, SQLite-persisted sessions, streamed
   CLI output, and budget enforcement. Vulnerability reasoning,
@@ -91,7 +95,7 @@ To install `audit` as a system binary: `cargo install --path crates/cli`.
 
 | Variable              | What it enables                                                                                                        | Without it                                                    |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `ANTHROPIC_API_KEY`   | Default LLM provider for `audit recon <target> --agent`                                                                | Pick another `--provider` or fall back to deterministic recon |
+| `ANTHROPIC_API_KEY`   | Default LLM provider for `audit recon <target>`                                                                | Pick another `--provider` or fall back to deterministic recon |
 | `OPENROUTER_API_KEY`  | Agent routing via `--provider openrouter` (any Claude/GPT/Gemini/Llama model)                                          | Use a different provider                                      |
 | `OPENAI_API_KEY`      | Agent routing via `--provider openai`; fallback key for `--provider openai-compat`; also used as an embedding provider | Use a different provider or supply `--llm-api-key-env`        |
 | `VOYAGE_API_KEY`      | Primary embedding provider for `audit knowledge` (voyage-code-3)                                                       | Falls back to OpenAI or local Ollama                          |
@@ -222,24 +226,25 @@ clone — same layout detector, same config parsers, same import graph.
 Points at any directory containing a `foundry.toml`, `hardhat.config.*`, or
 `truffle-config.js`.
 
-### Agent-driven recon (experimental)
+### `audit recon` — LLM-driven auditor
 
-> **Phase 3 in progress.** The LLM-driven path is wired end-to-end but
-> the system prompt, tool descriptions, and budgets are still being
-> iterated on. Expect tool-use choices to shift between versions, and
-> set a sane `--max-cost` before leaving a session unattended.
+`audit recon <target>` runs an LLM-driven tool-use loop against the
+target. Recon-mode by default; pass `--vuln` to switch into
+vulnerability-hunting mode (Set 9.5).
 
-Passing `--agent` routes the target through an LLM tool-use loop
-instead of the deterministic pipeline. The agent calls the same
-eleven recon tools (`classify_target`, `resolve_onchain_system`,
-`fetch_github_repo`, `analyze_project`, `read_file`, `grep_project`,
-`list_directory`, `get_storage_slot`, `static_call`,
-`resolve_onchain_contract`, `finalize_report`) and produces a
-markdown brief in its own voice.
+> **Set 9.5 trust moment.** The deterministic ingestion path that
+> shipped in Sets 1–5 has been removed. `audit recon` is agent-only
+> now. Verified end-to-end across Sets 6–9.5; details in
+> `reports/SET-9.md` and `reports/wave-launcher-trial.md`.
+
+The agent calls a registry of tools — 14 in recon mode, **25 in
+`--vuln` mode** (recon tools + knowledge-base retrieval + analytical
+wrappers like `find_callers_of` / `simulate_call_chain` + the three
+self-critique tools that drive structured-recording discipline).
+Output is a markdown brief in the agent's voice.
 
 ```console
 $ audit recon 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 \
-    --agent \
     --max-turns 20 \
     --max-cost 100
 
@@ -304,23 +309,23 @@ Examples:
 
 ```bash
 # OpenRouter, routed to Claude Opus under the hood:
-audit recon <target> --agent \
+audit recon <target> \
   --provider openrouter \
   --model anthropic/claude-opus-4-7
 
 # Local Ollama running Llama 3.1 70B:
-audit recon <target> --agent \
+audit recon <target> \
   --provider ollama \
   --model llama3.1:70b
 
 # llama.cpp server on a custom port:
-audit recon <target> --agent \
+audit recon <target> \
   --provider openai-compat \
   --llm-base-url http://localhost:8080/v1 \
   --model qwen2.5-coder-32b
 
 # OpenAI GPT-4o:
-audit recon <target> --agent \
+audit recon <target> \
   --provider openai --model gpt-4o
 ```
 
@@ -342,12 +347,81 @@ BASILISK_MAX_COST_CENTS=300
 
 ```bash
 # now this just works:
-audit recon <target> --agent
+audit recon <target>
 ```
 
 CLI flags override env vars, so one-off tweaks stay cheap: `audit recon
-<target> --agent --model openai/gpt-4o`. The full list of `BASILISK_*`
+<target> --model openai/gpt-4o`. The full list of `BASILISK_*`
 variables is documented in `.env.example`.
+
+#### Vulnerability-hunt mode (`--vuln`)
+
+Set 9 added a `--vuln` flag that swaps the agent's behavior wholesale.
+Set 9.5 hardened it.
+
+```bash
+audit recon 0xB9873b482d51b8b0f989DCD6CCf1D91520092b95 \
+  --chain ethereum \
+  --vuln \
+  --provider openrouter \
+  --model anthropic/claude-sonnet-4-6 \
+  --session-note "wave-launcher vuln hunt"
+```
+
+What `--vuln` flips:
+
+- **Registry** → 25 tools (recon's 14 + 4 knowledge-base retrieval +
+  4 analytical wrappers like `find_callers_of`,
+  `trace_state_dependencies`, `simulate_call_chain`,
+  `build_and_run_foundry_test` + 3 self-critique tools).
+- **System prompt** → `vuln_v2.md` (Set 9.5; ~2,400 words; three
+  phases — Discovery → Investigation → Synthesis — plus a
+  non-negotiable "structured recording" section that makes
+  `record_suspicion` and `record_limitation` calls mandatory for
+  hunches and walls).
+- **Default model** → Claude Sonnet 4.6. Faster + cheaper than Opus
+  (~$3-5 vs ~$25 on a typical novel target). Opt into Opus for
+  high-stakes targets via `--model claude-opus-4-7`.
+- **Default budget** → 100 turns / 2M tokens / $50 / 1h.
+- **Exec backend** → anvil-spawned forks for `simulate_call_chain`
+  and `build_and_run_foundry_test`. Requires Foundry on `$PATH` and
+  `MAINNET_RPC_URL` or `ALCHEMY_API_KEY`.
+- **Ordering rail** → `finalize_self_critique` mandatory before
+  `finalize_report`. Runner blocks the first finalize attempt with a
+  retryable nudge; second attempt force-injects a stub critique.
+
+The `~/.basilisk/feedback/` directory accumulates structured records
+across sessions:
+
+```bash
+cat ~/.basilisk/feedback/limitations.jsonl   # walls hit, by session
+cat ~/.basilisk/feedback/suspicions.jsonl    # hunches the agent surfaced
+cat ~/.basilisk/feedback/self_critiques.jsonl # per-session reflections
+```
+
+`scripts/calibrate-vuln.sh` re-runs WaveLauncher with Sonnet and
+prints a summary against the recorded Opus baseline (Set 9 Run C,
+$25.12 / 9 min) for cost-vs-quality calibration.
+
+#### Benchmark — `audit bench`
+
+```bash
+audit bench list                            # 5 calibration targets
+audit bench show euler-2023                 # full target dossier
+audit bench run visor-2021                  # spawn a vuln session, score it
+audit bench run                             # all 5 sequentially
+audit bench history                         # newest-first run log
+audit bench score <run-id>                  # re-score against current expectations
+audit bench compare <run-a> <run-b>         # side-by-side diff
+```
+
+Five targets shipped: Euler (donation + self-liquidation), Visor
+(reentrancy via owner callback), Cream (oracle manipulation),
+Beanstalk (governance via flash-loaned voting weight), Nomad
+(zero-root replay). Each pinned at the block immediately before the
+exploit. Scoring is heuristic keyword matching against
+`expected_findings`; full rationale per target in
+`crates/bench/src/targets.rs`.
 
 Local-model caveat: tool-use quality varies significantly by model.
 A 7B-class model rarely completes a recon brief without supervision.

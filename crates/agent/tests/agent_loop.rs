@@ -960,11 +960,10 @@ async fn ordering_rail_force_injects_on_second_attempt() {
 // critical-path wiring stays correct.
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn vuln_run_validates_prompt_registry_and_rail() {
     use basilisk_agent::testing::build_vuln_test_runner;
-    use basilisk_agent::tools::{
-        vuln_registry, FINALIZE_SELF_CRITIQUE_NAME, VULN_V2_PROMPT,
-    };
+    use basilisk_agent::tools::{vuln_registry, FINALIZE_SELF_CRITIQUE_NAME, VULN_V2_PROMPT};
     use sha2::{Digest, Sha256};
 
     // Redirect feedback JSONL writes to a tempdir so the test
@@ -1087,7 +1086,11 @@ async fn vuln_run_validates_prompt_registry_and_rail() {
         .iter()
         .filter(|r| r.tool_name == "finalize_report")
         .collect();
-    assert_eq!(finalize_rows.len(), 2, "expected 2 finalize_report attempts");
+    assert_eq!(
+        finalize_rows.len(),
+        2,
+        "expected 2 finalize_report attempts"
+    );
     assert!(
         finalize_rows[0].is_error,
         "first finalize_report should be blocked by rail",

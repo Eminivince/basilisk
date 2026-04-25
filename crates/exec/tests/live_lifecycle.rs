@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use basilisk_exec::{
-    AnvilForkBackend, ExecutionBackend, ForkBlock, ForkChain, ForkSpec, ForgeProject,
+    AnvilForkBackend, ExecutionBackend, ForgeProject, ForkBlock, ForkChain, ForkSpec,
     GLOBAL_FORK_REGISTRY,
 };
 use tokio::time::sleep;
@@ -36,12 +36,9 @@ fn upstream_rpc_url() -> Option<String> {
 #[tokio::test]
 #[ignore = "spawns real anvil subprocesses; requires foundry + RPC"]
 async fn fork_lifecycle_cleanup_via_shutdown_all() {
-    let upstream = match upstream_rpc_url() {
-        Some(u) => u,
-        None => {
-            eprintln!("skipping: no MAINNET_RPC_URL or ALCHEMY_API_KEY in env");
-            return;
-        }
+    let Some(upstream) = upstream_rpc_url() else {
+        eprintln!("skipping: no MAINNET_RPC_URL or ALCHEMY_API_KEY in env");
+        return;
     };
     if AnvilForkBackend::require_binary().is_err() {
         eprintln!("skipping: anvil not on $PATH");
@@ -68,7 +65,10 @@ async fn fork_lifecycle_cleanup_via_shutdown_all() {
     // process-wide singleton; other tests in this binary may have
     // added more).
     let live_before = GLOBAL_FORK_REGISTRY.live().len();
-    assert!(live_before >= 3, "expected ≥3 live forks, got {live_before}");
+    assert!(
+        live_before >= 3,
+        "expected ≥3 live forks, got {live_before}"
+    );
 
     // Pretend we received a signal. shutdown_all is what the real
     // signal handler invokes.
@@ -102,12 +102,9 @@ async fn fork_lifecycle_cleanup_via_shutdown_all() {
 async fn poc_synthesis_minimal_against_usdc_decimals() {
     use basilisk_exec::scaffold_minimal_project;
 
-    let upstream = match upstream_rpc_url() {
-        Some(u) => u,
-        None => {
-            eprintln!("skipping: no MAINNET_RPC_URL or ALCHEMY_API_KEY in env");
-            return;
-        }
+    let Some(upstream) = upstream_rpc_url() else {
+        eprintln!("skipping: no MAINNET_RPC_URL or ALCHEMY_API_KEY in env");
+        return;
     };
     if basilisk_exec::forge_binary().is_err() {
         eprintln!("skipping: forge not on $PATH");
@@ -138,15 +135,9 @@ contract UsdcDecimalsTest {
 "#;
 
     let dir = tempfile::tempdir().expect("tempdir");
-    scaffold_minimal_project(
-        dir.path(),
-        test_source,
-        "Usdc.t.sol",
-        Some("0.8.20"),
-        &[],
-    )
-    .await
-    .expect("scaffold");
+    scaffold_minimal_project(dir.path(), test_source, "Usdc.t.sol", Some("0.8.20"), &[])
+        .await
+        .expect("scaffold");
 
     let project = ForgeProject {
         root: dir.path().to_path_buf(),
@@ -158,26 +149,23 @@ contract UsdcDecimalsTest {
     };
 
     let result = basilisk_exec::run_forge_test(&project, None).await;
-
-    match result {
-        Ok(r) => {
-            // Either a passing test or a clean setup_failed with a
-            // diagnostic. Both are valid signals that the runner
-            // works; we want at minimum one of: setup_failed
-            // populated (forge couldn't compile / fork) or passed
-            // non-empty.
-            let summary = format!(
-                "passed={} failed={} setup_failed={:?}",
-                r.passed.len(),
-                r.failed.len(),
-                r.setup_failed.as_deref().map(|s| &s[..s.len().min(80)]),
-            );
-            eprintln!("forge result: {summary}");
-            assert!(
-                r.ok() || r.setup_failed.is_some() || !r.failed.is_empty(),
-                "forge test produced no signal at all: {summary}",
-            );
-        }
+    let r = match result {
+        Ok(r) => r,
         Err(e) => panic!("run_forge_test errored (not a setup failure): {e}"),
-    }
+    };
+    // Either a passing test or a clean setup_failed with a
+    // diagnostic. Both are valid signals that the runner works;
+    // we want at minimum one of: setup_failed populated (forge
+    // couldn't compile / fork) or passed non-empty.
+    let summary = format!(
+        "passed={} failed={} setup_failed={:?}",
+        r.passed.len(),
+        r.failed.len(),
+        r.setup_failed.as_deref().map(|s| &s[..s.len().min(80)]),
+    );
+    eprintln!("forge result: {summary}");
+    assert!(
+        r.ok() || r.setup_failed.is_some() || !r.failed.is_empty(),
+        "forge test produced no signal at all: {summary}",
+    );
 }

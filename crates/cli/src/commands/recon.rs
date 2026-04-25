@@ -70,11 +70,11 @@ mod tests {
 
     #[test]
     fn format_target_prepends_chain_to_bare_address() {
-        let s = format_target("0xB9873b482d51b8b0f989DCD6CCf1D91520092b95", Some("ethereum"));
-        assert_eq!(
-            s,
-            "ethereum/0xB9873b482d51b8b0f989DCD6CCf1D91520092b95"
+        let s = format_target(
+            "0xB9873b482d51b8b0f989DCD6CCf1D91520092b95",
+            Some("ethereum"),
         );
+        assert_eq!(s, "ethereum/0xB9873b482d51b8b0f989DCD6CCf1D91520092b95");
     }
 
     #[test]

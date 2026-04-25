@@ -89,8 +89,8 @@ pub static GLOBAL_FORK_REGISTRY: LazyLock<ForkRegistry> = LazyLock::new(ForkRegi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ForkBlock, ForkChain, ForkSpec, MockExecutionBackend};
     use crate::backend::ExecutionBackend;
+    use crate::{ForkBlock, ForkChain, ForkSpec, MockExecutionBackend};
     use std::sync::Arc;
 
     fn block_on<F: std::future::Future>(f: F) -> F::Output {
@@ -101,10 +101,9 @@ mod tests {
     fn register_then_live_returns_strong_ref() {
         let reg = ForkRegistry::new();
         let backend = MockExecutionBackend::new();
-        let fork: Arc<dyn Fork> = block_on(
-            backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)),
-        )
-        .unwrap();
+        let fork: Arc<dyn Fork> =
+            block_on(backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)))
+                .unwrap();
         reg.register(&fork);
         assert_eq!(reg.live().len(), 1);
     }
@@ -114,10 +113,9 @@ mod tests {
         let reg = ForkRegistry::new();
         let backend = MockExecutionBackend::new();
         {
-            let fork: Arc<dyn Fork> = block_on(
-                backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)),
-            )
-            .unwrap();
+            let fork: Arc<dyn Fork> =
+                block_on(backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)))
+                    .unwrap();
             reg.register(&fork);
             assert_eq!(reg.live().len(), 1);
             // fork drops at end of scope
@@ -129,14 +127,12 @@ mod tests {
     fn shutdown_all_calls_shutdown_on_every_live_fork() {
         let reg = ForkRegistry::new();
         let backend = MockExecutionBackend::new();
-        let f1: Arc<dyn Fork> = block_on(
-            backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)),
-        )
-        .unwrap();
-        let f2: Arc<dyn Fork> = block_on(
-            backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)),
-        )
-        .unwrap();
+        let f1: Arc<dyn Fork> =
+            block_on(backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)))
+                .unwrap();
+        let f2: Arc<dyn Fork> =
+            block_on(backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)))
+                .unwrap();
         reg.register(&f1);
         reg.register(&f2);
         let n = block_on(reg.shutdown_all());
@@ -148,17 +144,15 @@ mod tests {
         let reg = ForkRegistry::new();
         let backend = MockExecutionBackend::new();
         {
-            let f: Arc<dyn Fork> = block_on(
-                backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)),
-            )
-            .unwrap();
+            let f: Arc<dyn Fork> =
+                block_on(backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)))
+                    .unwrap();
             reg.register(&f);
         }
         // Now register a new one — GC should prune the dropped one.
-        let f2: Arc<dyn Fork> = block_on(
-            backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)),
-        )
-        .unwrap();
+        let f2: Arc<dyn Fork> =
+            block_on(backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)))
+                .unwrap();
         reg.register(&f2);
         assert_eq!(reg.len(), 1);
     }

@@ -116,8 +116,7 @@ fn recon_without_api_key_fails_with_contextual_error() {
         String::from_utf8_lossy(&out.stderr),
     );
     assert!(
-        combined.to_lowercase().contains("api key")
-            || combined.to_lowercase().contains("not set"),
+        combined.to_lowercase().contains("api key") || combined.to_lowercase().contains("not set"),
         "expected contextual API-key error; got: {combined}",
     );
 }

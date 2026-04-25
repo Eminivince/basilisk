@@ -37,7 +37,7 @@ pub enum BenchCmd {
     /// model / budget.
     Run(RunArgs),
     /// Re-score an existing run against the target's current
-    /// `expected_findings`. Useful when expected_findings get
+    /// `expected_findings`. Useful when `expected_findings` get
     /// updated after the run was recorded.
     Score(ScoreArgs),
     /// Compare two recorded runs side-by-side. Shows matches /
@@ -384,8 +384,8 @@ fn run_score(args: &ScoreArgs) -> Result<()> {
         .load_run(args.run_id)
         .with_context(|| format!("loading bench run #{}", args.run_id))?
         .ok_or_else(|| anyhow::anyhow!("no bench run #{}", args.run_id))?;
-    let run: BenchmarkRun = serde_json::from_str(&row.run_json)
-        .context("deserialising stored run_json")?;
+    let run: BenchmarkRun =
+        serde_json::from_str(&row.run_json).context("deserialising stored run_json")?;
     let target = basilisk_bench::targets::by_id(&row.target_id).ok_or_else(|| {
         anyhow::anyhow!(
             "stored target_id {:?} no longer in basilisk-bench (target removed?)",
@@ -401,6 +401,7 @@ fn run_score(args: &ScoreArgs) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_compare(args: &CompareArgs) -> Result<()> {
     let db = args.db.clone().unwrap_or_else(default_db_path);
     let store = BenchStore::open(&db)
@@ -421,10 +422,10 @@ fn run_compare(args: &CompareArgs) -> Result<()> {
         );
     }
 
-    let run_a: BenchmarkRun = serde_json::from_str(&a.run_json)
-        .context("deserialising run_a run_json")?;
-    let run_b: BenchmarkRun = serde_json::from_str(&b.run_json)
-        .context("deserialising run_b run_json")?;
+    let run_a: BenchmarkRun =
+        serde_json::from_str(&a.run_json).context("deserialising run_a run_json")?;
+    let run_b: BenchmarkRun =
+        serde_json::from_str(&b.run_json).context("deserialising run_b run_json")?;
     let score_a: basilisk_bench::BenchmarkScore =
         serde_json::from_str(&a.score_json).context("deserialising run_a score_json")?;
     let score_b: basilisk_bench::BenchmarkScore =
@@ -432,22 +433,20 @@ fn run_compare(args: &CompareArgs) -> Result<()> {
 
     let cost_a = run_a.cost_cents.unwrap_or(0);
     let cost_b = run_b.cost_cents.unwrap_or(0);
-    let dur_a_secs = u64::try_from(run_a.duration.as_secs()).unwrap_or(0);
-    let dur_b_secs = u64::try_from(run_b.duration.as_secs()).unwrap_or(0);
+    let left_seconds = run_a.duration.as_secs();
+    let right_seconds = run_b.duration.as_secs();
 
-    println!(
-        "Comparing #{a_id} vs #{b_id}",
-        a_id = a.id,
-        b_id = b.id,
-    );
+    println!("Comparing #{a_id} vs #{b_id}", a_id = a.id, b_id = b.id,);
     println!("  target: {}", a.target_id);
     if a.target_id != b.target_id {
         println!("          (vs. {})", b.target_id);
     }
     println!();
     println!(
-        "{:<22}{:<14}{:<14}{}",
-        "", format!("#{}", a.id), format!("#{}", b.id), "diff"
+        "{:<22}{:<14}{:<14}diff",
+        "",
+        format!("#{}", a.id),
+        format!("#{}", b.id),
     );
     println!(
         "{:<22}{:<14}{:<14}{}",
@@ -496,17 +495,23 @@ fn run_compare(args: &CompareArgs) -> Result<()> {
     println!(
         "{:<22}{:<14}{:<14}{}",
         "Duration (s):",
-        dur_a_secs,
-        dur_b_secs,
+        left_seconds,
+        right_seconds,
         diff_signed(
-            i64::try_from(dur_b_secs).unwrap_or(0) - i64::try_from(dur_a_secs).unwrap_or(0)
+            i64::try_from(right_seconds).unwrap_or(0) - i64::try_from(left_seconds).unwrap_or(0)
         ),
     );
 
-    let titles_a: std::collections::HashSet<String> =
-        run_a.agent_findings.iter().map(|f| f.title.clone()).collect();
-    let titles_b: std::collections::HashSet<String> =
-        run_b.agent_findings.iter().map(|f| f.title.clone()).collect();
+    let titles_a: std::collections::HashSet<String> = run_a
+        .agent_findings
+        .iter()
+        .map(|f| f.title.clone())
+        .collect();
+    let titles_b: std::collections::HashSet<String> = run_b
+        .agent_findings
+        .iter()
+        .map(|f| f.title.clone())
+        .collect();
 
     let only_a: Vec<&String> = titles_a.difference(&titles_b).collect();
     let only_b: Vec<&String> = titles_b.difference(&titles_a).collect();
@@ -543,12 +548,11 @@ fn run_compare(args: &CompareArgs) -> Result<()> {
 }
 
 fn diff_signed(d: i64) -> String {
-    if d > 0 {
-        format!("+{d}")
-    } else if d < 0 {
-        format!("{d}")
-    } else {
-        "0".into()
+    use std::cmp::Ordering;
+    match d.cmp(&0) {
+        Ordering::Greater => format!("+{d}"),
+        Ordering::Less => format!("{d}"),
+        Ordering::Equal => "0".into(),
     }
 }
 
@@ -563,12 +567,11 @@ fn diff_signed_f(d: f64) -> String {
 }
 
 fn diff_signed_money(cents: i64) -> String {
+    use std::cmp::Ordering;
     let dollars = f64::from(i32::try_from(cents).unwrap_or(0)) / 100.0;
-    if cents > 0 {
-        format!("+${dollars:.2}")
-    } else if cents < 0 {
-        format!("-${:.2}", dollars.abs())
-    } else {
-        "$0.00".into()
+    match cents.cmp(&0) {
+        Ordering::Greater => format!("+${dollars:.2}"),
+        Ordering::Less => format!("-${:.2}", dollars.abs()),
+        Ordering::Equal => "$0.00".into(),
     }
 }
