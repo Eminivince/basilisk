@@ -1,0 +1,25 @@
+[package]
+name = "basilisk-bench"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Benchmark harness for Basilisk — real post-exploit targets with pinned blocks + expected findings, scoring, and history."
+
+[lints]
+workspace = true
+
+[dependencies]
+basilisk-agent.workspace = true
+basilisk-core.workspace = true
+
+alloy-primitives.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

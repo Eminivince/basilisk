@@ -311,8 +311,8 @@ struct RecordFindingArgs {
     /// Agent-asserted confidence tier. Written as a prefix on
     /// `reasoning` so it survives into the embedding without a
     /// schema migration. Expected values: `"confirmed"`
-    /// (PoC-validated via `build_and_run_foundry_test`),
-    /// `"theoretical"` (strong evidence, no PoC),
+    /// (`PoC`-validated via `build_and_run_foundry_test`),
+    /// `"theoretical"` (strong evidence, no `PoC`),
     /// `"speculative"` (plausible, low certainty). Unknown values
     /// pass through.
     #[serde(default)]

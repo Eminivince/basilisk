@@ -121,10 +121,10 @@ pub fn knowledge_enhanced_registry() -> ToolRegistry {
 }
 
 /// The full Set 9 vulnerability-reasoning registry: knowledge-enhanced
-/// plus the four analytical wrappers (find_callers_of,
-/// trace_state_dependencies, simulate_call_chain,
-/// build_and_run_foundry_test) plus the three self-critique tools
-/// (record_limitation, record_suspicion, finalize_self_critique).
+/// plus the four analytical wrappers (`find_callers_of`,
+/// `trace_state_dependencies`, `simulate_call_chain`,
+/// `build_and_run_foundry_test`) plus the three self-critique tools
+/// (`record_limitation`, `record_suspicion`, `finalize_self_critique`).
 ///
 /// Total: 25 tools. The ordering rail in the runner enforces
 /// `finalize_self_critique` before `finalize_report`; that enforcement
@@ -137,6 +137,7 @@ pub fn knowledge_enhanced_registry() -> ToolRegistry {
 ///   - `exec: Some(_)` — else `simulate_call_chain` and
 ///     `build_and_run_foundry_test` error;
 ///   - `scratchpad: Some(_)` — else scratchpad tools error.
+///
 /// All three return typed errors rather than panicking; the runner's
 /// [`AgentRunner::with_knowledge`](crate::AgentRunner::with_knowledge),
 /// [`with_exec`](crate::AgentRunner::with_exec), and
