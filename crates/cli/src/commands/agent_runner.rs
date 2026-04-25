@@ -276,7 +276,7 @@ pub async fn run_agent_with_outcome(
     let outcome = runner
         .run_with_observer(
             target.to_string(),
-            build_initial_message(target, flags.note.as_deref()),
+            build_initial_message_for(target, flags.note.as_deref(), flags.vuln),
             flags.note.clone(),
             observer,
         )
@@ -324,7 +324,7 @@ pub async fn run_agent(target: &str, flags: &AgentFlags, config: &Config) -> Res
     let outcome = runner
         .run_with_observer(
             target.to_string(),
-            build_initial_message(target, flags.note.as_deref()),
+            build_initial_message_for(target, flags.note.as_deref(), flags.vuln),
             flags.note.clone(),
             observer,
         )
@@ -627,13 +627,34 @@ fn load_system_prompt(path: Option<&Path>) -> Result<String> {
         .with_context(|| format!("reading system prompt from {}", p.display()))
 }
 
-fn build_initial_message(target: &str, note: Option<&str>) -> String {
-    let mut msg = format!(
-        "Target: {target}\n\n\
-         Please perform reconnaissance. Classify the target, pull any sources that exist, \
-         and investigate notable patterns. Call `finalize_report` when you have enough \
-         to write a useful recon brief for a human reviewer."
-    );
+/// Picks the recon vs vuln framing. The `--vuln` path
+/// from CP9.12 needs the user-role message to actually ask for
+/// vulnerability hunting; otherwise the agent (correctly) follows
+/// the literal "perform reconnaissance" wording even though the
+/// system prompt is `vuln_v1.md`.
+fn build_initial_message_for(target: &str, note: Option<&str>, vuln: bool) -> String {
+    let mut msg = if vuln {
+        format!(
+            "Target: {target}\n\n\
+             Hunt for vulnerabilities in this target. Read the system prompt's three-phase \
+             discipline and follow it: build the model (Discovery), test specific hypotheses \
+             with the analytical and exec tools (Investigation), then synthesize.\n\n\
+             Use the tools liberally — `find_callers_of` and `trace_state_dependencies` to \
+             pair external calls with state effects; `simulate_call_chain` to spot-check \
+             attack sequences against a forked block; `build_and_run_foundry_test` to upgrade \
+             a strong suspicion into a Confirmed finding. Call `record_suspicion` for every \
+             hunch you can't confirm, `record_limitation` for every wall you hit. Call \
+             `finalize_self_critique` then `finalize_report` only when you've actually done \
+             the investigation, not just described the architecture."
+        )
+    } else {
+        format!(
+            "Target: {target}\n\n\
+             Please perform reconnaissance. Classify the target, pull any sources that exist, \
+             and investigate notable patterns. Call `finalize_report` when you have enough \
+             to write a useful recon brief for a human reviewer."
+        )
+    };
     if let Some(n) = note {
         msg.push_str("\n\nOperator note: ");
         msg.push_str(n);
@@ -933,7 +954,7 @@ mod tests {
 
     #[test]
     fn initial_message_embeds_target_and_note() {
-        let msg = build_initial_message("eth/0xdead", Some("trusted author"));
+        let msg = build_initial_message_for("eth/0xdead", Some("trusted author"), false);
         assert!(msg.contains("eth/0xdead"));
         assert!(msg.contains("finalize_report"));
         assert!(msg.contains("trusted author"));
@@ -941,8 +962,21 @@ mod tests {
 
     #[test]
     fn initial_message_omits_note_section_when_absent() {
-        let msg = build_initial_message("x", None);
+        let msg = build_initial_message_for("x", None, false);
         assert!(!msg.contains("Operator note"));
+    }
+
+    #[test]
+    fn initial_message_vuln_branch_asks_for_vulnerability_hunting() {
+        let recon = build_initial_message_for("0xabc", None, false);
+        let vuln = build_initial_message_for("0xabc", None, true);
+        assert!(recon.contains("recon"));
+        assert!(!vuln.contains("perform reconnaissance"));
+        // Vuln branch should reference the hunt + the discipline tools.
+        assert!(vuln.contains("Hunt for vulnerabilities"));
+        assert!(vuln.contains("record_suspicion"));
+        assert!(vuln.contains("record_limitation"));
+        assert!(vuln.contains("finalize_self_critique"));
     }
 
     #[test]
