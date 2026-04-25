@@ -375,6 +375,37 @@ pub fn echo_registry_with_self_critique() -> ToolRegistry {
     r
 }
 
+/// Vuln-mode test runner. Uses the real [`vuln_registry`] (25 tools)
+/// and the embedded `vuln_v2.md` prompt — what `audit recon … --vuln`
+/// configures in production. The integration test in
+/// `tests/agent_loop.rs::vuln_run_validates_prompt_registry_and_rail`
+/// uses this to assert the critical-path wiring stays correct, the
+/// regression-class smoke test that would have caught CP9.12 +
+/// 8d67037 from Set 9.
+///
+/// [`vuln_registry`]: crate::tools::vuln_registry
+#[must_use]
+pub fn build_vuln_test_runner(
+    backend: Arc<dyn LlmBackend>,
+    repo_cache_root: PathBuf,
+    budget: Budget,
+) -> AgentRunner {
+    let store = Arc::new(SessionStore::open_in_memory().expect("in-memory store opens"));
+    let config = Arc::new(Config::default());
+    let github = Arc::new(GithubClient::new(None).expect("tokenless github client"));
+    let repo_cache = Arc::new(RepoCache::open_at(repo_cache_root).expect("repo cache opens"));
+    AgentRunner::new(
+        backend,
+        crate::tools::vuln_registry(),
+        store,
+        config,
+        github,
+        repo_cache,
+        crate::tools::VULN_V2_PROMPT,
+        budget,
+    )
+}
+
 /// Variant of [`build_test_runner`] that uses
 /// [`echo_registry_with_self_critique`] so the ordering rail is
 /// active — the sense you want for testing the rail itself.

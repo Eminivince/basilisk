@@ -950,3 +950,174 @@ async fn ordering_rail_force_injects_on_second_attempt() {
     assert!(finalize_rows[0].is_error);
     assert!(!finalize_rows[1].is_error);
 }
+
+// --- Set 9.5 / CP9.5.8: --vuln integration test ----------------------------
+//
+// The smoke test that would have caught CP9.12 (registry/prompt swap missing
+// from build_runner) and 8d67037 (initial-message asking for "reconnaissance"
+// regardless of --vuln). Uses the real vuln_registry + VULN_V2_PROMPT, scripts
+// the LLM through a representative phase-structured run, and asserts the
+// critical-path wiring stays correct.
+
+#[tokio::test]
+async fn vuln_run_validates_prompt_registry_and_rail() {
+    use basilisk_agent::testing::build_vuln_test_runner;
+    use basilisk_agent::tools::{
+        vuln_registry, FINALIZE_SELF_CRITIQUE_NAME, VULN_V2_PROMPT,
+    };
+    use sha2::{Digest, Sha256};
+
+    // Redirect feedback JSONL writes to a tempdir so the test
+    // doesn't pollute the operator's ~/.basilisk/feedback/.
+    let feedback_dir = tempfile::tempdir().expect("feedback tempdir");
+    std::env::set_var("BASILISK_FEEDBACK_DIR", feedback_dir.path());
+
+    // 25 tools is the contract. Recon is 14, knowledge-enhanced 18,
+    // vuln 25 (= 18 + 4 analytical + 3 self-critique).
+    let reg = vuln_registry();
+    assert_eq!(reg.len(), 25, "vuln_registry should have 25 tools");
+    for required in [
+        "classify_target",
+        "resolve_onchain_system",
+        "search_knowledge_base",
+        "find_callers_of",
+        "trace_state_dependencies",
+        "simulate_call_chain",
+        "build_and_run_foundry_test",
+        "record_finding",
+        "record_suspicion",
+        "record_limitation",
+        FINALIZE_SELF_CRITIQUE_NAME,
+        "finalize_report",
+    ] {
+        assert!(
+            reg.get(required).is_some(),
+            "vuln_registry missing required tool {required}",
+        );
+    }
+
+    let backend = Arc::new(MockLlmBackend::new("claude-sonnet-4-6"));
+
+    // Turn 1 (assistant): premature finalize_report — rail should
+    // intercept and nudge.
+    backend.push(
+        MockResponse::new()
+            .finalize(
+                "tu_premature",
+                "# brief\nDone already!",
+                Confidence::High,
+                None,
+            )
+            .usage(60, 30)
+            .build(),
+    );
+    // Turn 2 (assistant): respond to nudge with the prescribed
+    // sequence — record_suspicion, record_finding,
+    // finalize_self_critique, then finalize_report. All in one
+    // assistant turn so dispatch order matters.
+    backend.push(
+        MockResponse::new()
+            .tool_use(
+                "tu_susp",
+                "record_suspicion",
+                serde_json::json!({
+                    "description": "test suspicion: looks off in foo()",
+                    "location": "Foo.sol:42",
+                    "why_unconfirmed": "would need a fork PoC"
+                }),
+            )
+            .tool_use(
+                "tu_find",
+                "record_finding",
+                serde_json::json!({
+                    "title": "Test finding",
+                    "severity": "high",
+                    "category": "reentrancy",
+                    "summary": "test summary",
+                    "target": "0xtest",
+                    "confidence": "theoretical"
+                }),
+            )
+            .tool_use(
+                "tu_crit",
+                FINALIZE_SELF_CRITIQUE_NAME,
+                serde_json::json!({
+                    "findings_quality_assessment": "one finding, one suspicion",
+                    "methodology_gaps": "no fork sim",
+                    "what_to_improve": "add simulate_call_chain on the suspicious path"
+                }),
+            )
+            .finalize(
+                "tu_final",
+                "# Findings\n\nThe brief, properly framed.",
+                Confidence::Medium,
+                None,
+            )
+            .usage(200, 120)
+            .build(),
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let runner = build_vuln_test_runner(backend, dir.path().to_path_buf(), Budget::default());
+    let outcome = runner
+        .run("0xtest-target", "audit", None)
+        .await
+        .expect("vuln run ok");
+
+    // 1) Stop reason is success.
+    assert_eq!(outcome.stop_reason, AgentStopReason::ReportFinalized);
+
+    // 2) Prompt-hash assertion: the session row's prompt_hash must
+    // match sha256(VULN_V2_PROMPT). This is the load-bearing check
+    // that the prompt swap actually happened.
+    let snap = runner.store().load_session(&outcome.session_id).unwrap();
+    let mut hasher = Sha256::new();
+    hasher.update(VULN_V2_PROMPT.as_bytes());
+    let expected_hash = hex::encode(hasher.finalize());
+    assert_eq!(
+        snap.session.system_prompt_hash, expected_hash,
+        "session prompt_hash does not match VULN_V2_PROMPT — registry/prompt swap regression",
+    );
+
+    // 3) Ordering rail fired. First finalize_report attempt should
+    // be persisted as is_error=true; the eventual finalize_report
+    // (after critique) is not_error.
+    let finalize_rows: Vec<_> = snap
+        .tool_calls
+        .iter()
+        .filter(|r| r.tool_name == "finalize_report")
+        .collect();
+    assert_eq!(finalize_rows.len(), 2, "expected 2 finalize_report attempts");
+    assert!(
+        finalize_rows[0].is_error,
+        "first finalize_report should be blocked by rail",
+    );
+    assert!(
+        !finalize_rows[1].is_error,
+        "second finalize_report (after critique) should succeed",
+    );
+
+    // 4) Both record_finding and record_suspicion were called.
+    let kinds: std::collections::HashSet<String> = snap
+        .tool_calls
+        .iter()
+        .map(|r| r.tool_name.clone())
+        .collect();
+    assert!(kinds.contains("record_suspicion"));
+    assert!(kinds.contains("record_finding"));
+    assert!(kinds.contains(FINALIZE_SELF_CRITIQUE_NAME));
+
+    // 5) session_feedback got the structured records (the moat-fix
+    // assertion). Without the structured-recording channel actually
+    // populating, the suspicion lives only in the markdown — Set 9
+    // observed exactly this and Set 9.5 fixes it.
+    let store = runner.store();
+    let suspicions = store
+        .count_feedback(&outcome.session_id, "suspicion")
+        .unwrap();
+    let critiques = store
+        .count_feedback(&outcome.session_id, "self_critique")
+        .unwrap();
+    assert_eq!(suspicions, 1, "suspicion didn't reach session_feedback");
+    assert_eq!(critiques, 1, "self_critique didn't reach session_feedback");
+}
