@@ -30,10 +30,15 @@
 
 pub mod error;
 pub mod render;
+pub mod store;
 pub mod types;
 
 pub use error::ScratchpadError;
 pub use render::{render_compact, render_markdown, COMPACT_TOKEN_BUDGET};
+pub use store::{
+    apply_schema, ScratchpadStore, ScratchpadSummary, REVISION_CAP_PER_SESSION,
+    SCRATCHPAD_SCHEMA_SQL,
+};
 pub use types::{
     now_ms, Item, ItemId, ItemRevision, ItemStatus, ItemUpdate, ItemsSection, ProseSection,
     Scratchpad, Section, SectionKey, SectionKind, ITEM_HISTORY_CAP, SCRATCHPAD_SCHEMA_VERSION,

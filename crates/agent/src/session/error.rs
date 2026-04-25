@@ -29,4 +29,10 @@ pub enum SessionError {
     /// thread panicked mid-write. Recoverable on next open.
     #[error("session store lock poisoned")]
     LockPoisoned,
+
+    /// A required schema migration couldn't be applied — surfaces
+    /// the underlying scratchpad / scratchpad-revisions table
+    /// creation failure.
+    #[error("schema migration failed: {0}")]
+    SchemaMigration(String),
 }

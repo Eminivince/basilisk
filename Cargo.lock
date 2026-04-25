@@ -865,6 +865,7 @@ dependencies = [
  "basilisk-onchain",
  "basilisk-project",
  "basilisk-rpc",
+ "basilisk-scratchpad",
  "basilisk-vector",
  "dirs",
  "futures",

@@ -21,6 +21,7 @@ basilisk-llm = { workspace = true }
 basilisk-onchain = { workspace = true }
 basilisk-project = { workspace = true }
 basilisk-rpc = { workspace = true }
+basilisk-scratchpad = { workspace = true }
 basilisk-vector = { workspace = true }
 
 alloy-primitives = { workspace = true }

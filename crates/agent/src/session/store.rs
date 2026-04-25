@@ -45,7 +45,11 @@ const SCHEMA_SQL: &str = include_str!("schema.sql");
 /// Current schema version. Bump when the schema changes; `apply_schema`
 /// sets it on every open so a fresh DB starts at the current version
 /// and future migrations land alongside the bump.
-pub const SCHEMA_VERSION: u32 = 2;
+///
+/// - v1: initial tables.
+/// - v2: `final_report_notes` column.
+/// - v3: `scratchpads` + `scratchpad_revisions` tables (Set 8).
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Shared handle to the session database.
 ///
@@ -115,7 +119,7 @@ impl SessionStore {
 
     fn apply_schema(conn: &Connection) -> Result<(), SessionError> {
         // Foreign keys aren't on by default in `SQLite`. We want CASCADE
-        // on `DELETE session` to clean up turns + tool_calls.
+        // on `DELETE session` to clean up turns + tool_calls + scratchpads.
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         conn.execute_batch(SCHEMA_SQL)?;
 
@@ -134,6 +138,10 @@ impl SessionStore {
                 Err(e) => return Err(e.into()),
             }
         }
+        // v3: scratchpad tables. Idempotent (IF NOT EXISTS) so running
+        // against a fresh DB or against a pre-existing v3+ DB is safe.
+        basilisk_scratchpad::apply_schema(conn)
+            .map_err(|e| SessionError::SchemaMigration(format!("scratchpad: {e}")))?;
         // Always set the canonical version after migrations.
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
@@ -701,6 +709,64 @@ mod tests {
             .collect();
         assert!(rows.iter().any(|n| n == "sessions_created_at_idx"));
         assert!(rows.iter().any(|n| n == "sessions_status_idx"));
+    }
+
+    #[test]
+    fn schema_v3_creates_scratchpad_tables() {
+        let store = SessionStore::open_in_memory().unwrap();
+        let conn = store.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+            .unwrap();
+        let rows: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert!(rows.iter().any(|n| n == "scratchpads"));
+        assert!(rows.iter().any(|n| n == "scratchpad_revisions"));
+    }
+
+    #[test]
+    fn migrating_from_v2_db_creates_scratchpad_tables_without_data_loss() {
+        // Simulate a pre-existing v2 DB — the v2 schema + user_version
+        // pinned back to 2.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db_path = tmp.path().join("legacy-v2.db");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            // Run only the base schema (which is current; v2 has all
+            // the same tables just without `final_report_notes`).
+            conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+            conn.execute_batch(SCHEMA_SQL).unwrap();
+            conn.pragma_update(None, "user_version", 2u32).unwrap();
+            // Seed one session row to prove data survives migration.
+            conn.execute(
+                "INSERT INTO sessions (id, created_at_ms, updated_at_ms, target, model,
+                    system_prompt_hash, status, stats_json)
+                 VALUES ('legacy-1', 1, 1, 'eth/0xdead', 'm', 'h', 'completed', '{}')",
+                [],
+            )
+            .unwrap();
+        }
+        // Now open with the current binary — should migrate to v3,
+        // create the scratchpad tables, and leave the seeded session
+        // intact.
+        let store = SessionStore::open(&db_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+        let conn = store.lock().unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "legacy session should survive v2 → v3 migration");
+        let has_scratchpads: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='scratchpads'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_scratchpads, 1);
     }
 
     #[test]
