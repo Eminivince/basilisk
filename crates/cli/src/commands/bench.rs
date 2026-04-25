@@ -33,9 +33,17 @@ pub enum BenchCmd {
     History(HistoryArgs),
     /// Run the agent against a target (or all targets), score the
     /// findings, and record the run. Uses `--vuln` mode; pass the
-    /// same agent flags as `audit recon --agent` to override provider
-    /// / model / budget.
+    /// same agent flags as `audit recon` to override provider /
+    /// model / budget.
     Run(RunArgs),
+    /// Re-score an existing run against the target's current
+    /// `expected_findings`. Useful when expected_findings get
+    /// updated after the run was recorded.
+    Score(ScoreArgs),
+    /// Compare two recorded runs side-by-side. Shows matches /
+    /// misses / false positives, coverage delta, cost delta, and
+    /// findings unique to each run.
+    Compare(CompareArgs),
 }
 
 #[derive(Debug, Args)]
@@ -63,12 +71,32 @@ pub struct RunArgs {
     pub agent: AgentFlags,
 }
 
+#[derive(Debug, Args)]
+pub struct ScoreArgs {
+    /// `bench_runs.id` (the integer printed by `audit bench history`).
+    pub run_id: i64,
+    #[arg(long, value_name = "PATH", env = "BASILISK_SESSION_DB")]
+    pub db: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct CompareArgs {
+    /// First run id (left column in the diff).
+    pub run_a: i64,
+    /// Second run id (right column).
+    pub run_b: i64,
+    #[arg(long, value_name = "PATH", env = "BASILISK_SESSION_DB")]
+    pub db: Option<PathBuf>,
+}
+
 pub async fn run(cmd: &BenchCmd, config: &Config) -> Result<()> {
     match cmd {
         BenchCmd::List => run_list(),
         BenchCmd::Show(args) => run_show(args),
         BenchCmd::History(args) => run_history(args),
         BenchCmd::Run(args) => run_run(args, config).await,
+        BenchCmd::Score(args) => run_score(args),
+        BenchCmd::Compare(args) => run_compare(args),
     }
 }
 
@@ -330,4 +358,203 @@ fn count_feedback(
     let lim = u32::try_from(store.count_feedback(session_id, "limitation")?).unwrap_or(u32::MAX);
     let sus = u32::try_from(store.count_feedback(session_id, "suspicion")?).unwrap_or(u32::MAX);
     Ok((lim, sus))
+}
+
+// --- bench score / compare (Set 9.5 / CP9.5.6) -------------------------------
+
+fn run_score(args: &ScoreArgs) -> Result<()> {
+    let db = args.db.clone().unwrap_or_else(default_db_path);
+    let store = BenchStore::open(&db)
+        .with_context(|| format!("opening bench store at {}", db.display()))?;
+    let row = store
+        .load_run(args.run_id)
+        .with_context(|| format!("loading bench run #{}", args.run_id))?
+        .ok_or_else(|| anyhow::anyhow!("no bench run #{}", args.run_id))?;
+    let run: BenchmarkRun = serde_json::from_str(&row.run_json)
+        .context("deserialising stored run_json")?;
+    let target = basilisk_bench::targets::by_id(&row.target_id).ok_or_else(|| {
+        anyhow::anyhow!(
+            "stored target_id {:?} no longer in basilisk-bench (target removed?)",
+            row.target_id
+        )
+    })?;
+    let s = score(target, &run);
+    println!("=== rescore: bench run #{} ===", row.id);
+    println!("target: {} ({})", target.name, target.id);
+    println!("session: {}", row.session_id.as_deref().unwrap_or("-"));
+    println!();
+    print_score(&s);
+    Ok(())
+}
+
+fn run_compare(args: &CompareArgs) -> Result<()> {
+    let db = args.db.clone().unwrap_or_else(default_db_path);
+    let store = BenchStore::open(&db)
+        .with_context(|| format!("opening bench store at {}", db.display()))?;
+    let a = store
+        .load_run(args.run_a)
+        .with_context(|| format!("loading bench run #{}", args.run_a))?
+        .ok_or_else(|| anyhow::anyhow!("no bench run #{}", args.run_a))?;
+    let b = store
+        .load_run(args.run_b)
+        .with_context(|| format!("loading bench run #{}", args.run_b))?
+        .ok_or_else(|| anyhow::anyhow!("no bench run #{}", args.run_b))?;
+
+    if a.target_id != b.target_id {
+        eprintln!(
+            "warning: comparing runs against different targets ({} vs {})",
+            a.target_id, b.target_id
+        );
+    }
+
+    let run_a: BenchmarkRun = serde_json::from_str(&a.run_json)
+        .context("deserialising run_a run_json")?;
+    let run_b: BenchmarkRun = serde_json::from_str(&b.run_json)
+        .context("deserialising run_b run_json")?;
+    let score_a: basilisk_bench::BenchmarkScore =
+        serde_json::from_str(&a.score_json).context("deserialising run_a score_json")?;
+    let score_b: basilisk_bench::BenchmarkScore =
+        serde_json::from_str(&b.score_json).context("deserialising run_b score_json")?;
+
+    let cost_a = run_a.cost_cents.unwrap_or(0);
+    let cost_b = run_b.cost_cents.unwrap_or(0);
+    let dur_a_secs = u64::try_from(run_a.duration.as_secs()).unwrap_or(0);
+    let dur_b_secs = u64::try_from(run_b.duration.as_secs()).unwrap_or(0);
+
+    println!(
+        "Comparing #{a_id} vs #{b_id}",
+        a_id = a.id,
+        b_id = b.id,
+    );
+    println!("  target: {}", a.target_id);
+    if a.target_id != b.target_id {
+        println!("          (vs. {})", b.target_id);
+    }
+    println!();
+    println!(
+        "{:<22}{:<14}{:<14}{}",
+        "", format!("#{}", a.id), format!("#{}", b.id), "diff"
+    );
+    println!(
+        "{:<22}{:<14}{:<14}{}",
+        "Matches:",
+        score_a.matches.len(),
+        score_b.matches.len(),
+        diff_signed(
+            i64::try_from(score_b.matches.len()).unwrap_or(0)
+                - i64::try_from(score_a.matches.len()).unwrap_or(0)
+        ),
+    );
+    println!(
+        "{:<22}{:<14}{:<14}{}",
+        "Misses:",
+        score_a.misses.len(),
+        score_b.misses.len(),
+        diff_signed(
+            i64::try_from(score_b.misses.len()).unwrap_or(0)
+                - i64::try_from(score_a.misses.len()).unwrap_or(0)
+        ),
+    );
+    println!(
+        "{:<22}{:<14}{:<14}{}",
+        "False positives:",
+        score_a.false_positives.len(),
+        score_b.false_positives.len(),
+        diff_signed(
+            i64::try_from(score_b.false_positives.len()).unwrap_or(0)
+                - i64::try_from(score_a.false_positives.len()).unwrap_or(0)
+        ),
+    );
+    println!(
+        "{:<22}{:<14.1}{:<14.1}{}",
+        "Coverage (%):",
+        score_a.coverage_percent,
+        score_b.coverage_percent,
+        diff_signed_f((score_b.coverage_percent - score_a.coverage_percent).into()),
+    );
+    println!(
+        "{:<22}${:<13.2}${:<13.2}{}",
+        "Cost:",
+        f64::from(cost_a) / 100.0,
+        f64::from(cost_b) / 100.0,
+        diff_signed_money(i64::from(cost_b) - i64::from(cost_a)),
+    );
+    println!(
+        "{:<22}{:<14}{:<14}{}",
+        "Duration (s):",
+        dur_a_secs,
+        dur_b_secs,
+        diff_signed(
+            i64::try_from(dur_b_secs).unwrap_or(0) - i64::try_from(dur_a_secs).unwrap_or(0)
+        ),
+    );
+
+    let titles_a: std::collections::HashSet<String> =
+        run_a.agent_findings.iter().map(|f| f.title.clone()).collect();
+    let titles_b: std::collections::HashSet<String> =
+        run_b.agent_findings.iter().map(|f| f.title.clone()).collect();
+
+    let only_a: Vec<&String> = titles_a.difference(&titles_b).collect();
+    let only_b: Vec<&String> = titles_b.difference(&titles_a).collect();
+    let both: Vec<&String> = titles_a.intersection(&titles_b).collect();
+
+    println!();
+    println!("Findings unique to #{}:", a.id);
+    if only_a.is_empty() {
+        println!("  (none)");
+    } else {
+        for t in only_a {
+            println!("  - {t}");
+        }
+    }
+    println!();
+    println!("Findings unique to #{}:", b.id);
+    if only_b.is_empty() {
+        println!("  (none)");
+    } else {
+        for t in only_b {
+            println!("  - {t}");
+        }
+    }
+    println!();
+    println!("Findings in both:");
+    if both.is_empty() {
+        println!("  (none)");
+    } else {
+        for t in both {
+            println!("  - {t}");
+        }
+    }
+    Ok(())
+}
+
+fn diff_signed(d: i64) -> String {
+    if d > 0 {
+        format!("+{d}")
+    } else if d < 0 {
+        format!("{d}")
+    } else {
+        "0".into()
+    }
+}
+
+fn diff_signed_f(d: f64) -> String {
+    if d > 0.0 {
+        format!("+{d:.1}")
+    } else if d < 0.0 {
+        format!("{d:.1}")
+    } else {
+        "0.0".into()
+    }
+}
+
+fn diff_signed_money(cents: i64) -> String {
+    let dollars = f64::from(i32::try_from(cents).unwrap_or(0)) / 100.0;
+    if cents > 0 {
+        format!("+${dollars:.2}")
+    } else if cents < 0 {
+        format!("-${:.2}", dollars.abs())
+    } else {
+        "$0.00".into()
+    }
 }
