@@ -137,6 +137,32 @@ dim migration hasn't happened yet in practice — the operator's only
 provider swap so far has been Ollama → Voyage where we cleared the
 collection manually. Ships alongside the first real migration event.
 
+### Scratchpad revisit cadence in the system prompt
+
+Set 8's live run showed the agent writes the scratchpad once
+(early) and doesn't revisit it. Against a clean recon target this
+is correct — nothing changes — but Set 9's vulnerability-reasoning
+pass will run 30–100 turns where mid-run updates matter. Unlock:
+a prompt-language change ("before every `finalize_report`, read
+back your scratchpad and confirm it reflects what you now
+believe") plus optionally a runner hook that forces a
+`scratchpad_read` call before `finalize_report` accepts input.
+Deferred to Set 9 because the right prompt wording depends on
+how the reasoning loop is structured; no point tuning against
+today's recon shape.
+
+### Item-status lifecycle coverage
+
+Set 8's live test exercised `append_item` but nothing set a
+status transition (Open → InProgress → Confirmed / Dismissed).
+Clean recon targets rarely have evidence that accumulates against
+a hypothesis the way vulnerability reasoning does. Unlock:
+natural coverage from Set 9's live tests, which will flip items
+through statuses dozens of times per run. Deferred because
+writing a synthetic test that exercises the transitions doesn't
+validate the same thing — we want to see real reasoning drive
+the lifecycle.
+
 ### `audit session resume` live test
 
 The resume path is wired end-to-end and covered by unit tests
