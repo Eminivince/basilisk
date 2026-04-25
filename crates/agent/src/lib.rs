@@ -31,8 +31,13 @@ pub use session::{
 };
 pub use tool::{SessionId, Tool, ToolContext, ToolRegistry, ToolResult};
 pub use tools::{
-    knowledge_enhanced_registry, standard_registry, AnalyzeProject, ClassifyTarget, Confidence,
-    FetchGithubRepo, FinalReport, FinalizeReport, GetStorageSlot, GrepProject, ListDirectory,
-    ReadFile, RecordFinding, ResolveOnchainContract, ResolveOnchainSystem, SearchKnowledgeBase,
-    SearchProtocolDocs, SearchSimilarCode, StaticCall, FINALIZE_REPORT_NAME,
+    knowledge_enhanced_registry, standard_registry, vuln_registry, AnalyzeProject,
+    BuildAndRunFoundryTestTool, ClassifyTarget, Confidence, FetchGithubRepo, FinalReport,
+    FinalizeReport, FinalizeSelfCritique, FindCallersOfTool, GetStorageSlot, GrepProject,
+    ListDirectory, ReadFile, RecordFinding, RecordLimitation, RecordSuspicion,
+    ResolveOnchainContract, ResolveOnchainSystem, SearchKnowledgeBase, SearchProtocolDocs,
+    SearchSimilarCode, SimulateCallChainTool, StaticCall, TraceStateDependenciesTool,
+    BUILD_AND_RUN_FOUNDRY_TEST_NAME, FINALIZE_REPORT_NAME, FINALIZE_SELF_CRITIQUE_NAME,
+    FIND_CALLERS_OF_NAME, RECORD_LIMITATION_NAME, RECORD_SUSPICION_NAME, SIMULATE_CALL_CHAIN_NAME,
+    TRACE_STATE_DEPENDENCIES_NAME, VULN_V1_PROMPT,
 };

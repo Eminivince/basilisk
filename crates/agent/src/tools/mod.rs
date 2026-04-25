@@ -120,6 +120,47 @@ pub fn knowledge_enhanced_registry() -> ToolRegistry {
     reg
 }
 
+/// The full Set 9 vulnerability-reasoning registry: knowledge-enhanced
+/// plus the four analytical wrappers (find_callers_of,
+/// trace_state_dependencies, simulate_call_chain,
+/// build_and_run_foundry_test) plus the three self-critique tools
+/// (record_limitation, record_suspicion, finalize_self_critique).
+///
+/// Total: 25 tools. The ordering rail in the runner enforces
+/// `finalize_self_critique` before `finalize_report`; that enforcement
+/// only engages when this registry (or another containing the
+/// critique tool) is in use, so recon flows via
+/// [`standard_registry`] are unaffected.
+///
+/// `ToolContext` must carry:
+///   - `knowledge: Some(_)` — else knowledge tools error;
+///   - `exec: Some(_)` — else `simulate_call_chain` and
+///     `build_and_run_foundry_test` error;
+///   - `scratchpad: Some(_)` — else scratchpad tools error.
+/// All three return typed errors rather than panicking; the runner's
+/// [`AgentRunner::with_knowledge`](crate::AgentRunner::with_knowledge),
+/// [`with_exec`](crate::AgentRunner::with_exec), and
+/// [`with_scratchpad`](crate::AgentRunner::with_scratchpad) are the
+/// canonical way to populate them.
+#[must_use]
+pub fn vuln_registry() -> ToolRegistry {
+    let mut reg = knowledge_enhanced_registry();
+    reg.register(Arc::new(FindCallersOfTool));
+    reg.register(Arc::new(TraceStateDependenciesTool));
+    reg.register(Arc::new(SimulateCallChainTool));
+    reg.register(Arc::new(BuildAndRunFoundryTestTool));
+    reg.register(Arc::new(RecordLimitation));
+    reg.register(Arc::new(RecordSuspicion));
+    reg.register(Arc::new(FinalizeSelfCritique));
+    reg
+}
+
+/// Embedded vuln-reasoning system prompt. Use this when building an
+/// [`AgentRunner`](crate::AgentRunner) for `--vuln` sessions. Operators
+/// can override via `BASILISK_SYSTEM_PROMPT=<path>`; this is the
+/// compiled-in default.
+pub const VULN_V1_PROMPT: &str = include_str!("../prompts/vuln_v1.md");
+
 #[cfg(test)]
 #[allow(clippy::match_wildcard_for_single_variants)]
 mod tests {
@@ -129,6 +170,39 @@ mod tests {
     fn standard_registry_has_fourteen_tools() {
         let reg = standard_registry();
         assert_eq!(reg.len(), 14);
+    }
+
+    #[test]
+    fn vuln_registry_has_twenty_five_tools() {
+        let reg = vuln_registry();
+        assert_eq!(reg.len(), 25);
+    }
+
+    #[test]
+    fn vuln_registry_contains_self_critique_and_analytical_tools() {
+        let reg = vuln_registry();
+        for name in [
+            FINALIZE_SELF_CRITIQUE_NAME,
+            RECORD_LIMITATION_NAME,
+            RECORD_SUSPICION_NAME,
+            FIND_CALLERS_OF_NAME,
+            TRACE_STATE_DEPENDENCIES_NAME,
+            SIMULATE_CALL_CHAIN_NAME,
+            BUILD_AND_RUN_FOUNDRY_TEST_NAME,
+        ] {
+            assert!(reg.get(name).is_some(), "vuln_registry missing {name}");
+        }
+    }
+
+    #[test]
+    fn vuln_v1_prompt_is_substantive() {
+        // The prompt should be 1,500-2,500 words per spec. Word
+        // counting here is approximate — split on whitespace.
+        let words = VULN_V1_PROMPT.split_whitespace().count();
+        assert!(
+            (1_200..=3_500).contains(&words),
+            "vuln_v1.md outside expected length: {words} words"
+        );
     }
 
     #[test]
