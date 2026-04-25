@@ -100,7 +100,7 @@ pub struct ToolContext {
     /// tests that don't need persistence; tools fall back to
     /// operator-visible JSONL in that case.
     pub session_store: Option<Arc<crate::session::SessionStore>>,
-      /// Session-scoped cache of `ResolvedSystem`s keyed by root
+    /// Session-scoped cache of `ResolvedSystem`s keyed by root
     /// address. The `resolve_onchain_system` tool writes here on
     /// success; the vuln-reasoning analytical tools
     /// (`find_callers_of`, `trace_state_dependencies`) read from

@@ -46,12 +46,7 @@ pub trait Fork: Send + Sync {
     async fn stop_impersonating(&self, who: Address) -> Result<(), ExecError>;
 
     async fn set_balance(&self, who: Address, amount: U256) -> Result<(), ExecError>;
-    async fn set_storage(
-        &self,
-        addr: Address,
-        slot: B256,
-        value: B256,
-    ) -> Result<(), ExecError>;
+    async fn set_storage(&self, addr: Address, slot: B256, value: B256) -> Result<(), ExecError>;
     async fn warp_to(&self, timestamp: u64) -> Result<(), ExecError>;
 
     /// Snapshot the fork's current state. Pair with [`Self::revert`]
@@ -71,10 +66,7 @@ pub trait Fork: Send + Sync {
     /// forks delegate to `forge test --fork-url`; the mock backend
     /// returns a deterministic stub. The revm-only backend (future)
     /// will return [`ExecError::Unsupported`].
-    async fn run_foundry_test(
-        &self,
-        project: ForgeProject,
-    ) -> Result<ForgeTestResult, ExecError>;
+    async fn run_foundry_test(&self, project: ForgeProject) -> Result<ForgeTestResult, ExecError>;
 
     /// Tear the fork down explicitly. The backend's `Drop` runs this
     /// too on a best-effort basis, but explicit shutdown is preferred

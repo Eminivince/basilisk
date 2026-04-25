@@ -89,8 +89,7 @@ pub struct AgentRunner {
     /// `find_callers_of` / `trace_state_dependencies` can read
     /// from it.
     #[allow(clippy::type_complexity)]
-    pub(crate) resolved_systems_default:
-        std::marker::PhantomData<()>,
+    pub(crate) resolved_systems_default: std::marker::PhantomData<()>,
 }
 
 impl AgentRunner {
@@ -608,7 +607,9 @@ impl AgentRunner {
                     .is_some();
                 if name == FINALIZE_REPORT_NAME
                     && critique_registered
-                    && self.store.count_feedback(&session_id, "self_critique")
+                    && self
+                        .store
+                        .count_feedback(&session_id, "self_critique")
                         .unwrap_or(0)
                         == 0
                 {

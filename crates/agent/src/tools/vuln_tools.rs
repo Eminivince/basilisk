@@ -22,7 +22,7 @@ use basilisk_analyze::{
     find_callers_of, simulate_call_chain, trace_state_dependencies, CallStep, CallerSearch,
     SimulationInput,
 };
-use basilisk_exec::{ForkChain, ForgeProject};
+use basilisk_exec::{ForgeProject, ForkChain};
 use serde::Deserialize;
 use tempfile::tempdir;
 
@@ -98,9 +98,7 @@ impl Tool for FindCallersOfTool {
         };
         let Some(system) = systems.get(&root) else {
             return ToolResult::err(
-                format!(
-                    "system not resolved for root {root}; call resolve_onchain_system first"
-                ),
+                format!("system not resolved for root {root}; call resolve_onchain_system first"),
                 false,
             );
         };
@@ -523,7 +521,6 @@ fn parse_fork_chain(s: &str) -> Result<ForkChain, String> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -541,8 +538,14 @@ mod tests {
 
     #[test]
     fn selector_parser_accepts_0x_and_bare() {
-        assert_eq!(parse_selector("0xa9059cbb").unwrap(), [0xa9, 0x05, 0x9c, 0xbb]);
-        assert_eq!(parse_selector("a9059cbb").unwrap(), [0xa9, 0x05, 0x9c, 0xbb]);
+        assert_eq!(
+            parse_selector("0xa9059cbb").unwrap(),
+            [0xa9, 0x05, 0x9c, 0xbb]
+        );
+        assert_eq!(
+            parse_selector("a9059cbb").unwrap(),
+            [0xa9, 0x05, 0x9c, 0xbb]
+        );
     }
 
     #[test]
@@ -648,7 +651,10 @@ mod tests {
     #[test]
     fn names_match_constants() {
         assert_eq!(FindCallersOfTool.name(), FIND_CALLERS_OF_NAME);
-        assert_eq!(TraceStateDependenciesTool.name(), TRACE_STATE_DEPENDENCIES_NAME);
+        assert_eq!(
+            TraceStateDependenciesTool.name(),
+            TRACE_STATE_DEPENDENCIES_NAME
+        );
         assert_eq!(SimulateCallChainTool.name(), SIMULATE_CALL_CHAIN_NAME);
         assert_eq!(
             BuildAndRunFoundryTestTool.name(),
@@ -668,5 +674,4 @@ mod tests {
             assert!(schema["required"].is_array());
         }
     }
-
 }

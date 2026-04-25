@@ -166,16 +166,16 @@ impl Fork for MockFork {
     }
 
     async fn set_balance(&self, who: Address, amount: U256) -> Result<(), ExecError> {
-        self.inner.state.lock().unwrap().balances.insert(who, amount);
+        self.inner
+            .state
+            .lock()
+            .unwrap()
+            .balances
+            .insert(who, amount);
         Ok(())
     }
 
-    async fn set_storage(
-        &self,
-        addr: Address,
-        slot: B256,
-        value: B256,
-    ) -> Result<(), ExecError> {
+    async fn set_storage(&self, addr: Address, slot: B256, value: B256) -> Result<(), ExecError> {
         self.inner
             .state
             .lock()
@@ -198,7 +198,11 @@ impl Fork for MockFork {
         let snap = MockSnapshot {
             state: (&*self.inner.state.lock().unwrap()).into(),
         };
-        self.inner.snapshots.lock().unwrap().insert(key.clone(), snap);
+        self.inner
+            .snapshots
+            .lock()
+            .unwrap()
+            .insert(key.clone(), snap);
         Ok(SnapshotId(key))
     }
 
@@ -210,7 +214,8 @@ impl Fork for MockFork {
             .unwrap()
             .remove(snapshot.as_str())
             .ok_or_else(|| ExecError::Other(format!("unknown snapshot: {}", snapshot.as_str())))?;
-        snap.state.restore_into(&mut self.inner.state.lock().unwrap());
+        snap.state
+            .restore_into(&mut self.inner.state.lock().unwrap());
         Ok(())
     }
 
@@ -243,10 +248,7 @@ impl Fork for MockFork {
         })
     }
 
-    async fn run_foundry_test(
-        &self,
-        _project: ForgeProject,
-    ) -> Result<ForgeTestResult, ExecError> {
+    async fn run_foundry_test(&self, _project: ForgeProject) -> Result<ForgeTestResult, ExecError> {
         // Default mock behaviour: pretend a single test passed. Tests
         // wanting different behaviour wrap the mock fork or use
         // canned responses (future extension). This is enough for

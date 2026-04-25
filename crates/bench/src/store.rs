@@ -90,8 +90,13 @@ impl BenchStore {
         let rows: Vec<BenchHistoryRow> = stmt
             .query_map([], |r| {
                 let score_json: String = r.get(4)?;
-                let score: BenchmarkScore = serde_json::from_str(&score_json)
-                    .map_err(|e| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(e)))?;
+                let score: BenchmarkScore = serde_json::from_str(&score_json).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
                 Ok(BenchHistoryRow {
                     id: r.get(0)?,
                     target_id: r.get(1)?,
@@ -192,12 +197,8 @@ mod tests {
     #[test]
     fn history_is_newest_first() {
         let store = BenchStore::open_in_memory().unwrap();
-        store
-            .record("t1", None, "{}", &stub_score(), 100)
-            .unwrap();
-        store
-            .record("t2", None, "{}", &stub_score(), 200)
-            .unwrap();
+        store.record("t1", None, "{}", &stub_score(), 100).unwrap();
+        store.record("t2", None, "{}", &stub_score(), 200).unwrap();
         let h = store.history().unwrap();
         assert_eq!(h[0].target_id, "t2");
         assert_eq!(h[1].target_id, "t1");

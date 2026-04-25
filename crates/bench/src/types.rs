@@ -118,7 +118,9 @@ mod duration_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S: Serializer>(d: &Duration, s: S) -> Result<S::Ok, S::Error> {
-        u64::try_from(d.as_millis()).unwrap_or(u64::MAX).serialize(s)
+        u64::try_from(d.as_millis())
+            .unwrap_or(u64::MAX)
+            .serialize(s)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {

@@ -28,7 +28,7 @@ pub mod state_deps;
 pub use callers::{find_callers_of, CallerEvidence, CallerHit, CallerSearch, CallerSearchResult};
 pub use error::AnalyzeError;
 pub use simulate::{
-    simulate_call_chain, BalanceReading, CallStep, SimulationInput, SimulationResult,
-    StepOutcome, StorageReading,
+    simulate_call_chain, BalanceReading, CallStep, SimulationInput, SimulationResult, StepOutcome,
+    StorageReading,
 };
 pub use state_deps::{trace_state_dependencies, ExternalCall, Precision, SlotRef, StateDeps};

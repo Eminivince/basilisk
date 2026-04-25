@@ -223,10 +223,7 @@ fn read_storage(
         .collect())
 }
 
-fn read_balances(
-    _fork: &dyn Fork,
-    addrs: &[Address],
-) -> Result<Vec<BalanceReading>, AnalyzeError> {
+fn read_balances(_fork: &dyn Fork, addrs: &[Address]) -> Result<Vec<BalanceReading>, AnalyzeError> {
     Ok(addrs
         .iter()
         .map(|addr| BalanceReading {

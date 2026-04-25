@@ -332,9 +332,7 @@ mod tests {
             }],
             failed: vec![TestCase {
                 name: "b".into(),
-                status: TestStatus::Failed {
-                    reason: "x".into(),
-                },
+                status: TestStatus::Failed { reason: "x".into() },
                 gas_used: None,
                 trace: None,
             }],

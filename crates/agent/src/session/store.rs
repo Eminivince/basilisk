@@ -304,11 +304,7 @@ impl SessionStore {
     /// Count feedback rows of the given kind for a session. Used by
     /// the ordering rail (CP9.7): `finalize_report` is only accepted
     /// after at least one `self_critique` row exists.
-    pub fn count_feedback(
-        &self,
-        session_id: &SessionId,
-        kind: &str,
-    ) -> Result<u64, SessionError> {
+    pub fn count_feedback(&self, session_id: &SessionId, kind: &str) -> Result<u64, SessionError> {
         let conn = self.lock()?;
         let n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM session_feedback WHERE session_id = ? AND kind = ?",
@@ -333,7 +329,11 @@ impl SessionStore {
         )?;
         let rows = stmt
             .query_map([session_id.as_str()], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)

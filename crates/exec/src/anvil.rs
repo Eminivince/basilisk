@@ -118,11 +118,12 @@ impl ExecutionBackend for AnvilForkBackend {
     }
 
     async fn fork_at(&self, spec: ForkSpec) -> Result<Arc<dyn Fork>, ExecError> {
-        let upstream = spec.upstream_rpc_url.clone().ok_or_else(|| {
-            ExecError::NoRpcUrl {
+        let upstream = spec
+            .upstream_rpc_url
+            .clone()
+            .ok_or_else(|| ExecError::NoRpcUrl {
                 chain: spec.chain.canonical().into(),
-            }
-        })?;
+            })?;
         let bin = anvil_binary()?;
         let port = allocate_port()?;
         let mut cmd = Command::new(&bin);
@@ -271,12 +272,7 @@ impl Fork for AnvilFork {
         Ok(())
     }
 
-    async fn set_storage(
-        &self,
-        addr: Address,
-        slot: B256,
-        value: B256,
-    ) -> Result<(), ExecError> {
+    async fn set_storage(&self, addr: Address, slot: B256, value: B256) -> Result<(), ExecError> {
         rpc_call::<Value>(
             &self.inner,
             "anvil_setStorageAt",
@@ -344,10 +340,7 @@ impl Fork for AnvilFork {
             json!([tx_hash_hex]),
         )
         .await?;
-        let success = receipt
-            .get("status")
-            .and_then(Value::as_str)
-            == Some("0x1");
+        let success = receipt.get("status").and_then(Value::as_str) == Some("0x1");
         let gas_used = receipt
             .get("gasUsed")
             .and_then(Value::as_str)
@@ -369,10 +362,7 @@ impl Fork for AnvilFork {
         })
     }
 
-    async fn run_foundry_test(
-        &self,
-        project: ForgeProject,
-    ) -> Result<ForgeTestResult, ExecError> {
+    async fn run_foundry_test(&self, project: ForgeProject) -> Result<ForgeTestResult, ExecError> {
         // Point forge at this fork's RPC so it inherits any
         // impersonations / storage overrides we've set up. Falls
         // back to project.fork_url when this fork has no URL (mock).

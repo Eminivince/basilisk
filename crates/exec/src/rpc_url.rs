@@ -59,7 +59,11 @@ pub fn resolve_rpc_url(cfg: &Config, chain: ForkChain) -> Result<String, ExecErr
             ForkChain::Polygon => "https://polygon-mainnet.g.alchemy.com/v2/",
             ForkChain::Base => "https://base-mainnet.g.alchemy.com/v2/",
             // Alchemy doesn't host BNB; require an explicit URL.
-            ForkChain::Bnb => return Err(ExecError::NoRpcUrl { chain: chain.canonical().into() }),
+            ForkChain::Bnb => {
+                return Err(ExecError::NoRpcUrl {
+                    chain: chain.canonical().into(),
+                })
+            }
         };
         return Ok(format!("{template}{key}"));
     }

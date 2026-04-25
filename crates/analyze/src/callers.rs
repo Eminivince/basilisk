@@ -384,7 +384,8 @@ mod tests {
                     {}.call(abi.encodeWithSelector(0x12345678));
                 }}
             }}",
-            "0x4242424242424242424242424242424242424242", "address(0x4242424242424242424242424242424242424242)",
+            "0x4242424242424242424242424242424242424242",
+            "address(0x4242424242424242424242424242424242424242)",
         );
         let caller = mk_contract(Address::repeat_byte(0x09), vec![0x00], Some(body));
         let target = mk_contract(target_addr, vec![0x00], None);

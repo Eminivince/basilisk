@@ -59,7 +59,8 @@ pub async fn run_forge_test(
         .arg("--fork-url")
         .arg(url);
     if project.fork_block != 0 {
-        cmd.arg("--fork-block-number").arg(project.fork_block.to_string());
+        cmd.arg("--fork-block-number")
+            .arg(project.fork_block.to_string());
     }
     if let Some(filter) = &project.match_test {
         cmd.arg("--match-test").arg(filter);
@@ -70,10 +71,13 @@ pub async fn run_forge_test(
         block = project.fork_block,
         "running forge test"
     );
-    let output = cmd.output().await.map_err(|source| ExecError::SpawnFailed {
-        binary: "forge",
-        source,
-    })?;
+    let output = cmd
+        .output()
+        .await
+        .map_err(|source| ExecError::SpawnFailed {
+            binary: "forge",
+            source,
+        })?;
     let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -99,9 +103,8 @@ pub async fn run_forge_test(
             duration_ms,
         });
     }
-    let parsed = parse_forge_json(&stdout).map_err(|e| {
-        ExecError::Parse(format!("forge test JSON parse failed: {e}"))
-    })?;
+    let parsed = parse_forge_json(&stdout)
+        .map_err(|e| ExecError::Parse(format!("forge test JSON parse failed: {e}")))?;
     Ok(ForgeTestResult {
         stdout,
         stderr,
@@ -144,8 +147,7 @@ fn parse_forge_json(stdout: &str) -> Result<ForgeTestResult, serde_json::Error> 
     // foundryup. Find the first `{` and parse from there.
     let start = stdout.find('{').unwrap_or(0);
     let json = &stdout[start..];
-    let map: std::collections::BTreeMap<String, ForgeContractResults> =
-        serde_json::from_str(json)?;
+    let map: std::collections::BTreeMap<String, ForgeContractResults> = serde_json::from_str(json)?;
     let mut passed = Vec::new();
     let mut failed = Vec::new();
     for (contract_path, results) in map {
@@ -347,7 +349,10 @@ mod tests {
 
     #[test]
     fn short_setup_diag_caps_at_forty_lines() {
-        let big = (0..200).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
+        let big = (0..200)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let s = short_setup_diag(&big, "");
         assert_eq!(s.lines().count(), 40);
     }

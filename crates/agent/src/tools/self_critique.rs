@@ -295,7 +295,11 @@ fn append_feedback_jsonl(file_name: &str, _ctx: &ToolContext, wire: &serde_json:
             return;
         }
     };
-    match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         Ok(mut f) => {
             if let Err(e) = writeln!(f, "{line}") {
                 warn!(error = %e, "failed to append feedback");
@@ -411,7 +415,8 @@ mod tests {
             &c,
         ));
         assert!(matches!(r, ToolResult::Ok(_)));
-        let body = std::fs::read_to_string(feedback_dir.path().join("self_critiques.jsonl")).unwrap();
+        let body =
+            std::fs::read_to_string(feedback_dir.path().join("self_critiques.jsonl")).unwrap();
         assert!(body.contains("methodology_gaps"));
         std::env::remove_var("BASILISK_FEEDBACK_DIR");
     }

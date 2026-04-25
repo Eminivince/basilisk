@@ -78,14 +78,9 @@ fn run_list() -> Result<()> {
         println!("  {:20} — {}", t.id, t.name);
         println!(
             "    chain={} block={} severity={:?}",
-            t.chain,
-            t.fork_block,
-            t.severity
+            t.chain, t.fork_block, t.severity
         );
-        println!(
-            "    classes=[{}]",
-            t.vulnerability_classes.join(", "),
-        );
+        println!("    classes=[{}]", t.vulnerability_classes.join(", "),);
     }
     println!("\n{} targets shipped.", all_targets().len());
     Ok(())
@@ -191,7 +186,13 @@ async fn run_run(args: &RunArgs, config: &Config) -> Result<()> {
         );
         let target_input = format!("{}/0x{}", t.chain, hex::encode(t.target_address.as_slice()));
         let started = std::time::Instant::now();
-        let outcome = match super::agent_runner::run_agent_with_outcome(&target_input, &flags, config).await {
+        let outcome = match super::agent_runner::run_agent_with_outcome(
+            &target_input,
+            &flags,
+            config,
+        )
+        .await
+        {
             Ok(o) => o,
             Err(e) => {
                 eprintln!("  run failed: {e}");
@@ -238,7 +239,10 @@ fn print_score(s: &BenchmarkScore) {
         s.false_positives.len(),
     );
     for m in &s.matches {
-        println!("    ✓ {} → \"{}\" ({})", m.expected_class, m.agent_finding_title, m.agent_finding_severity);
+        println!(
+            "    ✓ {} → \"{}\" ({})",
+            m.expected_class, m.agent_finding_title, m.agent_finding_severity
+        );
     }
     for m in &s.misses {
         println!(

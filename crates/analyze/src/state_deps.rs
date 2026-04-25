@@ -90,10 +90,9 @@ pub fn trace_state_dependencies(
     contract_address: Address,
     selector: [u8; 4],
 ) -> Result<StateDeps, AnalyzeError> {
-    let contract = system
-        .contracts
-        .get(&contract_address)
-        .ok_or_else(|| AnalyzeError::UnknownAddress(format!("0x{}", hex::encode(contract_address.as_slice()))))?;
+    let contract = system.contracts.get(&contract_address).ok_or_else(|| {
+        AnalyzeError::UnknownAddress(format!("0x{}", hex::encode(contract_address.as_slice())))
+    })?;
 
     let mut out = StateDeps::default();
     if contract.bytecode.is_empty() && contract.source.is_none() {
@@ -111,7 +110,8 @@ pub fn trace_state_dependencies(
         if let Some(name) = find_function_name_for_selector(&source.abi, selector) {
             // Walk source files for `function <name>(...) { ... }`.
             for (path, body) in &source.source_files {
-                if let Some(extra) = scan_source_function(&path.display().to_string(), body, &name) {
+                if let Some(extra) = scan_source_function(&path.display().to_string(), body, &name)
+                {
                     // Append source-tagged refs without removing the
                     // bytecode set — the agent gets both views.
                     out.reads.extend(extra.reads);
@@ -150,9 +150,13 @@ fn scan_bytecode(bytecode: &[u8]) -> StateDeps {
         match op {
             0x54 => {
                 // SLOAD
-                let slot = last_push
-                    .as_ref()
-                    .and_then(|v| if v.len() <= 32 { Some(pad_b256(v)) } else { None });
+                let slot = last_push.as_ref().and_then(|v| {
+                    if v.len() <= 32 {
+                        Some(pad_b256(v))
+                    } else {
+                        None
+                    }
+                });
                 out.reads.push(SlotRef {
                     slot,
                     bytecode_offset: inst.pc,
@@ -314,15 +318,27 @@ fn scan_source_function(file: &str, body: &str, fn_name: &str) -> Option<StateDe
                 let before = &stripped[..eq_pos];
                 let after = &stripped[eq_pos + 1..];
                 let next = stripped.as_bytes().get(eq_pos + 1).copied();
-                let prev = if eq_pos == 0 { 0u8 } else { stripped.as_bytes()[eq_pos - 1] };
+                let prev = if eq_pos == 0 {
+                    0u8
+                } else {
+                    stripped.as_bytes()[eq_pos - 1]
+                };
                 // Filter `==`, `!=`, `<=`, `>=`, etc. Need a single `=`.
-                if next != Some(b'=') && prev != b'!' && prev != b'<' && prev != b'>' && prev != b'=' {
+                if next != Some(b'=')
+                    && prev != b'!'
+                    && prev != b'<'
+                    && prev != b'>'
+                    && prev != b'='
+                {
                     // Looks like an assignment. Heuristic for storage
                     // (vs local): if the LHS doesn't start with a
                     // type keyword or `var`, treat as storage write.
                     let lhs = before.trim();
                     let _ = after;
-                    let local_kw = ["uint", "int", "bool", "address", "bytes", "string", "var", "mapping", "struct"];
+                    let local_kw = [
+                        "uint", "int", "bool", "address", "bytes", "string", "var", "mapping",
+                        "struct",
+                    ];
                     let is_local = local_kw.iter().any(|kw| lhs.starts_with(kw));
                     if !is_local && !lhs.is_empty() {
                         out.writes.push(SlotRef {
@@ -473,7 +489,10 @@ mod tests {
         let r = trace_state_dependencies(&sys, Address::repeat_byte(0x1), [0; 4]).unwrap();
         assert_eq!(r.external_calls.len(), 1);
         assert_eq!(r.external_calls[0].to, Some(addr));
-        assert_eq!(r.external_calls[0].kind, super::super::callers::CallKind::Call);
+        assert_eq!(
+            r.external_calls[0].kind,
+            super::super::callers::CallKind::Call
+        );
     }
 
     #[test]
@@ -526,7 +545,10 @@ mod tests {
         assert_eq!(r.precision, Precision::Mixed);
         assert_eq!(r.matched_function_name.as_deref(), Some("bump"));
         // At least one source-text record on each side.
-        assert!(r.writes.iter().any(|w| matches!(w.source, Source::SourceText { .. })));
+        assert!(r
+            .writes
+            .iter()
+            .any(|w| matches!(w.source, Source::SourceText { .. })));
         assert!(r
             .external_calls
             .iter()
@@ -537,7 +559,11 @@ mod tests {
     fn source_pass_skips_when_no_function_matches_selector() {
         let body = r"contract T { function foo() external {} }";
         let abi = serde_json::json!([{"type": "function", "name": "foo", "inputs": []}]);
-        let c = mk_contract(Address::repeat_byte(0x1), vec![0x00], Some((body.into(), abi)));
+        let c = mk_contract(
+            Address::repeat_byte(0x1),
+            vec![0x00],
+            Some((body.into(), abi)),
+        );
         let sys = mk_system(vec![c]);
         // selector for `bump()` doesn't match `foo()`.
         let r = trace_state_dependencies(&sys, Address::repeat_byte(0x1), [0; 4]).unwrap();

@@ -844,12 +844,7 @@ async fn ordering_rail_blocks_finalize_then_allows_after_self_critique() {
     // Turn 1: agent tries finalize_report without a critique.
     backend.push(
         MockResponse::new()
-            .finalize(
-                "tu_f1",
-                "# premature\nI'm done.",
-                Confidence::Medium,
-                None,
-            )
+            .finalize("tu_f1", "# premature\nI'm done.", Confidence::Medium, None)
             .usage(60, 30)
             .build(),
     );
@@ -924,12 +919,7 @@ async fn ordering_rail_force_injects_on_second_attempt() {
     // force-injects a synthetic critique and lets it through.
     backend.push(
         MockResponse::new()
-            .finalize(
-                "tu_f2",
-                "# still going",
-                Confidence::Medium,
-                None,
-            )
+            .finalize("tu_f2", "# still going", Confidence::Medium, None)
             .usage(40, 10)
             .build(),
     );
