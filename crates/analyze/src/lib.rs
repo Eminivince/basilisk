@@ -22,12 +22,13 @@
 pub mod bytecode;
 pub mod callers;
 pub mod error;
+pub mod simulate;
 pub mod state_deps;
-
-// CP9.5 lands in a subsequent commit — module declared here so the
-// public surface settles in one place.
-// pub mod simulate;
 
 pub use callers::{find_callers_of, CallerEvidence, CallerHit, CallerSearch, CallerSearchResult};
 pub use error::AnalyzeError;
+pub use simulate::{
+    simulate_call_chain, BalanceReading, CallStep, SimulationInput, SimulationResult,
+    StepOutcome, StorageReading,
+};
 pub use state_deps::{trace_state_dependencies, ExternalCall, Precision, SlotRef, StateDeps};
