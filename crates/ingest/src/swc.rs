@@ -210,7 +210,7 @@ impl Ingester for SwcIngester {
         vector_store.create_collection(spec).await?;
 
         let max_to_ingest = options.max_records.unwrap_or(usize::MAX);
-        let batch_size = embeddings.max_batch_size().min(32);
+        // Token-aware batching — see `crate::batch::pack_batches`.
 
         let mut all_chunks = Vec::new();
         for (idx, (number, path)) in swc_files.iter().enumerate() {
@@ -230,7 +230,7 @@ impl Ingester for SwcIngester {
             all_chunks.extend(chunks);
         }
 
-        for batch in all_chunks.chunks(batch_size) {
+        for batch in crate::batch::pack_batches(&all_chunks, &*embeddings) {
             if batch.is_empty() {
                 continue;
             }

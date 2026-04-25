@@ -17,6 +17,7 @@
 //! Concrete ingesters (Solodit, SWC, OZ advisories, protocol
 //! context) arrive in CP7.5–CP7.7.
 
+pub mod batch;
 pub mod code4rena;
 pub mod code_refs;
 pub mod error;
@@ -31,6 +32,7 @@ pub mod state;
 pub mod swc;
 pub mod trailofbits;
 
+pub use batch::pack_batches;
 pub use code4rena::{Code4renaFindingRow, Code4renaIngester};
 pub use code_refs::{extract_code_refs, CodeRef};
 pub use error::IngestError;

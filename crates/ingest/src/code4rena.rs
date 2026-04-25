@@ -679,7 +679,9 @@ impl Ingester for Code4renaIngester {
         // structured (`<contest>:<severity>:<num>`) — lex sort is
         // stable enough for "have we seen this one."
         let mut latest_id = prior.cursor.clone();
-        let batch_size = embeddings.max_batch_size().min(32);
+        // Batches are packed by both count and total tokens so we
+        // never blow past the provider's per-batch token cap (Voyage
+        // 120k; OpenAI 300k). See `crate::batch::pack_batches`.
         let mut flat = Vec::new();
 
         for row in all_rows {
@@ -696,7 +698,7 @@ impl Ingester for Code4renaIngester {
             flat.extend(chunks);
         }
 
-        for batch in flat.chunks(batch_size) {
+        for batch in crate::batch::pack_batches(&flat, &*embeddings) {
             if batch.is_empty() {
                 continue;
             }

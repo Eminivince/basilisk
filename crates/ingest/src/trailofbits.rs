@@ -188,7 +188,7 @@ impl Ingester for TobBlogIngester {
         vector_store.create_collection(spec).await?;
 
         let max = options.max_records.unwrap_or(usize::MAX);
-        let batch_size = embeddings.max_batch_size().min(32);
+        // Token-aware batching — see `crate::batch::pack_batches`.
         let mut latest_line = prior.cursor.clone();
         let prior_line: usize = prior
             .cursor
@@ -211,7 +211,7 @@ impl Ingester for TobBlogIngester {
             flat.extend(chunks);
         }
 
-        for batch in flat.chunks(batch_size) {
+        for batch in crate::batch::pack_batches(&flat, &*embeddings) {
             if batch.is_empty() {
                 continue;
             }

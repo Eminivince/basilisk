@@ -44,6 +44,17 @@ pub trait EmbeddingProvider: Send + Sync {
     /// call. Exceeding this returns [`EmbeddingError::BadInput`].
     fn max_batch_size(&self) -> usize;
 
+    /// Maximum total tokens (summed across all inputs) the provider
+    /// accepts in one batched call. Voyage caps at 120k; `OpenAI` at
+    /// ~300k; Ollama is unbounded by spec. The default returns the
+    /// product of `max_tokens_per_input * max_batch_size` — i.e. no
+    /// extra constraint beyond the per-input + count limits.
+    /// Backends with explicit per-batch caps override this; ingesters
+    /// pack batches up to whichever limit binds first.
+    fn max_tokens_per_batch(&self) -> usize {
+        self.max_tokens_per_input().saturating_mul(self.max_batch_size())
+    }
+
     /// Embed a batch of inputs.
     ///
     /// Returns one [`Embedding`] per input in the same order. An

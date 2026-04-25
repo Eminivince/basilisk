@@ -53,6 +53,10 @@ const DEFAULT_BASE: &str = "https://api.voyageai.com";
 const VOYAGE_CODE_3_DIM: usize = 1024;
 const VOYAGE_CODE_3_MAX_TOKENS: usize = 16_000;
 const VOYAGE_MAX_BATCH: usize = 128;
+/// Voyage's documented per-batch token cap is 120k; pick a safe
+/// 100k to absorb tokenizer-estimate drift between our `chars/4`
+/// heuristic and the server-side count.
+const VOYAGE_MAX_TOKENS_PER_BATCH: usize = 100_000;
 
 /// Voyage API embedding backend.
 ///
@@ -171,6 +175,10 @@ impl EmbeddingProvider for VoyageBackend {
 
     fn max_batch_size(&self) -> usize {
         VOYAGE_MAX_BATCH
+    }
+
+    fn max_tokens_per_batch(&self) -> usize {
+        VOYAGE_MAX_TOKENS_PER_BATCH
     }
 
     async fn embed(&self, inputs: &[EmbeddingInput]) -> Result<Vec<Embedding>, EmbeddingError> {
