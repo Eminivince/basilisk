@@ -22,11 +22,12 @@
 pub mod bytecode;
 pub mod callers;
 pub mod error;
+pub mod state_deps;
 
-// CP9.4 / CP9.5 land in subsequent commits — the modules are
-// declared here so the public surface settles in one place.
-// pub mod state_deps;
+// CP9.5 lands in a subsequent commit — module declared here so the
+// public surface settles in one place.
 // pub mod simulate;
 
 pub use callers::{find_callers_of, CallerEvidence, CallerHit, CallerSearch, CallerSearchResult};
 pub use error::AnalyzeError;
+pub use state_deps::{trace_state_dependencies, ExternalCall, Precision, SlotRef, StateDeps};
