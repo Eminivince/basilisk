@@ -308,6 +308,15 @@ struct RecordFindingArgs {
     /// The audit target (address / repo URL / path). Required so
     /// future retrieval can filter by target.
     target: String,
+    /// Agent-asserted confidence tier. Written as a prefix on
+    /// `reasoning` so it survives into the embedding without a
+    /// schema migration. Expected values: `"confirmed"`
+    /// (PoC-validated via `build_and_run_foundry_test`),
+    /// `"theoretical"` (strong evidence, no PoC),
+    /// `"speculative"` (plausible, low certainty). Unknown values
+    /// pass through.
+    #[serde(default)]
+    confidence: Option<String>,
 }
 
 #[async_trait]
@@ -317,13 +326,16 @@ impl Tool for RecordFinding {
     }
 
     fn description(&self) -> &'static str {
-        "Record a finding. Call this when you've identified a \
-         vulnerability, misconfiguration, or concerning pattern. The \
-         finding is stored in Basilisk's memory and will surface when \
-         similar code is encountered in future audits. Do not call for \
-         general observations — only for things you'd flag to a human \
-         auditor. Returns the finding_id the operator can use to correct \
-         or confirm later."
+        "Record a finding. Call this when you've identified a vulnerability, misconfiguration, \
+         or concerning pattern worth flagging to a human auditor. The finding is stored in \
+         Basilisk's `user_findings` knowledge base — future audits against similar code will \
+         retrieve it. \n\n\
+         Confidence discipline: use `confidence: confirmed` ONLY when you have a passing PoC \
+         from `build_and_run_foundry_test`. Use `theoretical` for strong-evidence findings you \
+         couldn't prove via test. Use `speculative` when you're not fully confident — but \
+         prefer `record_suspicion` for those so they don't clutter the findings list. \n\n\
+         Do not record general observations as findings. Do not pad. Returns the finding_id \
+         the operator can use to correct or confirm later."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -356,7 +368,10 @@ impl Tool for RecordFinding {
                 },
                 "reasoning": { "type": "string" },
                 "related_findings": { "type": "array", "items": { "type": "string" } },
-                "poc_sketch": { "type": "string" }
+                "poc_sketch": { "type": "string" },
+                "confidence": { "type": "string",
+                                "enum": ["confirmed", "theoretical", "speculative"],
+                                "description": "How certain you are. `confirmed` requires a passing PoC from build_and_run_foundry_test. `theoretical` is strong evidence but no PoC. `speculative` is plausible but uncertain — prefer record_suspicion for those." }
             }
         })
     }
@@ -374,6 +389,15 @@ impl Tool for RecordFinding {
             Err(e) => return e,
         };
 
+        // Prefix `confidence` onto `reasoning` so the assertion
+        // survives into the embedding text and the operator-visible
+        // record without a schema migration. Unknown values pass
+        // through verbatim — the tool trusts the agent.
+        let reasoning_with_confidence = match (args.confidence.as_deref(), args.reasoning) {
+            (Some(c), Some(r)) => Some(format!("[confidence: {c}]\n\n{r}")),
+            (Some(c), None) => Some(format!("[confidence: {c}]")),
+            (None, r) => r,
+        };
         let record = FindingRecord {
             title: args.title,
             severity: args.severity,
@@ -381,7 +405,7 @@ impl Tool for RecordFinding {
             summary: args.summary,
             vulnerable_code: args.vulnerable_code,
             location: args.location,
-            reasoning: args.reasoning,
+            reasoning: reasoning_with_confidence,
             related_findings: args.related_findings,
             poc_sketch: args.poc_sketch,
         };
