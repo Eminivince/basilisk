@@ -8,13 +8,14 @@
 //! alongside the agent's session in `sessions.db`.
 
 use std::fmt::Write as _;
+use std::io::BufRead as _;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use basilisk_bench::{
     all_targets, score, AgentFindingSummary, BenchStore, BenchmarkRun, BenchmarkScore,
-    BenchmarkTarget,
+    BenchmarkTarget, ReviewVerdict,
 };
 use basilisk_core::Config;
 use clap::{Args, Subcommand};
@@ -44,6 +45,13 @@ pub enum BenchCmd {
     /// misses / false positives, coverage delta, cost delta, and
     /// findings unique to each run.
     Compare(CompareArgs),
+    /// Walk every miss + false positive from a recorded run and
+    /// label each as `actual_miss`, `scoring_failure`,
+    /// `false_positive`, `wrongly_flagged`, or `in_scope_extra`.
+    /// Verdicts persist; re-running the command resumes where you
+    /// left off (already-reviewed items are dimmed and skipped by
+    /// default; pass `--re-review` to re-prompt).
+    Review(ReviewArgs),
 }
 
 #[derive(Debug, Args)]
@@ -89,6 +97,18 @@ pub struct CompareArgs {
     pub db: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+pub struct ReviewArgs {
+    /// `bench_runs.id` (the integer printed by `audit bench history`).
+    pub run_id: i64,
+    /// Re-prompt for items that already have a verdict. By default,
+    /// already-reviewed items are skipped.
+    #[arg(long)]
+    pub re_review: bool,
+    #[arg(long, value_name = "PATH", env = "BASILISK_SESSION_DB")]
+    pub db: Option<PathBuf>,
+}
+
 pub async fn run(cmd: &BenchCmd, config: &Config) -> Result<()> {
     match cmd {
         BenchCmd::List => run_list(),
@@ -97,6 +117,7 @@ pub async fn run(cmd: &BenchCmd, config: &Config) -> Result<()> {
         BenchCmd::Run(args) => run_run(args, config).await,
         BenchCmd::Score(args) => run_score(args),
         BenchCmd::Compare(args) => run_compare(args),
+        BenchCmd::Review(args) => run_review(args),
     }
 }
 
@@ -574,4 +595,240 @@ fn diff_signed_money(cents: i64) -> String {
         Ordering::Less => format!("-${:.2}", dollars.abs()),
         Ordering::Equal => "$0.00".into(),
     }
+}
+
+// --- bench review (Set 9.6 / CP9.6.5) ----------------------------------------
+
+/// Verdict prompt: a short menu the operator picks from. Each verdict
+/// translates to a string stored in `bench_review_verdicts.verdict`.
+const MISS_VERDICTS: &[(&str, &str)] = &[
+    ("a", "actual_miss"),
+    ("s", "scoring_failure"),
+    ("k", "skip"),
+];
+const FP_VERDICTS: &[(&str, &str)] = &[
+    ("f", "false_positive"),
+    ("w", "wrongly_flagged"),
+    ("x", "in_scope_extra"),
+    ("k", "skip"),
+];
+
+#[allow(clippy::too_many_lines)]
+fn run_review(args: &ReviewArgs) -> Result<()> {
+    let db = args.db.clone().unwrap_or_else(default_db_path);
+    let store = BenchStore::open(&db)
+        .with_context(|| format!("opening bench store at {}", db.display()))?;
+    let row = store
+        .load_run(args.run_id)
+        .with_context(|| format!("loading bench run #{}", args.run_id))?
+        .ok_or_else(|| anyhow::anyhow!("no bench run #{}", args.run_id))?;
+    let run: BenchmarkRun =
+        serde_json::from_str(&row.run_json).context("deserialising stored run_json")?;
+    let stored_score: BenchmarkScore =
+        serde_json::from_str(&row.score_json).context("deserialising stored score_json")?;
+    let target = basilisk_bench::targets::by_id(&row.target_id).ok_or_else(|| {
+        anyhow::anyhow!(
+            "stored target_id {:?} no longer in basilisk-bench (target removed?)",
+            row.target_id
+        )
+    })?;
+
+    let prior: std::collections::HashMap<(String, String), ReviewVerdict> = store
+        .load_verdicts(args.run_id)?
+        .into_iter()
+        .map(|v| ((v.kind.clone(), v.label.clone()), v))
+        .collect();
+
+    println!("=== review: bench run #{} ===", row.id);
+    println!("target: {} ({})", target.name, target.id);
+    println!("session: {}", row.session_id.as_deref().unwrap_or("-"));
+    println!(
+        "scorer counts: matches={}  misses={}  false_positives={}",
+        stored_score.matches.len(),
+        stored_score.misses.len(),
+        stored_score.false_positives.len(),
+    );
+    if !prior.is_empty() {
+        println!("(prior verdicts on file: {})", prior.len());
+    }
+    println!();
+
+    let stdin = std::io::stdin();
+    let now_ms = i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_millis(),
+    )
+    .unwrap_or(i64::MAX);
+
+    // Walk misses first.
+    if stored_score.misses.is_empty() {
+        println!("(no misses to review)");
+    } else {
+        println!("--- misses ({}) ---", stored_score.misses.len());
+    }
+    for (idx, miss) in stored_score.misses.iter().enumerate() {
+        let key = ("miss".to_string(), miss.class.clone());
+        if let Some(prev) = prior.get(&key) {
+            if !args.re_review {
+                println!(
+                    "  [{}/{}] {} — already reviewed: {} (skip)",
+                    idx + 1,
+                    stored_score.misses.len(),
+                    miss.class,
+                    prev.verdict,
+                );
+                continue;
+            }
+        }
+        println!();
+        println!(
+            "  [{}/{}] miss: class={} severity_min={} keywords={:?}",
+            idx + 1,
+            stored_score.misses.len(),
+            miss.class,
+            miss.severity_min,
+            miss.must_mention,
+        );
+        let verdict = prompt_verdict(&stdin, MISS_VERDICTS, "    [a]ctual_miss / [s]coring_failure / s[k]ip")?;
+        if verdict == "skip" {
+            continue;
+        }
+        let note = prompt_note(&stdin)?;
+        store.record_verdict(args.run_id, "miss", &miss.class, &verdict, note.as_deref(), now_ms)?;
+        println!("    recorded: {verdict}");
+    }
+
+    // Then false positives.
+    println!();
+    if stored_score.false_positives.is_empty() {
+        println!("(no false positives to review)");
+    } else {
+        println!("--- false positives ({}) ---", stored_score.false_positives.len());
+    }
+    for (idx, fp) in stored_score.false_positives.iter().enumerate() {
+        let key = ("false_positive".to_string(), fp.title.clone());
+        if let Some(prev) = prior.get(&key) {
+            if !args.re_review {
+                println!(
+                    "  [{}/{}] {} — already reviewed: {} (skip)",
+                    idx + 1,
+                    stored_score.false_positives.len(),
+                    fp.title,
+                    prev.verdict,
+                );
+                continue;
+            }
+        }
+        println!();
+        println!(
+            "  [{}/{}] fp: \"{}\"  severity={}  category={}",
+            idx + 1,
+            stored_score.false_positives.len(),
+            fp.title,
+            fp.severity,
+            fp.category,
+        );
+        if !fp.summary.is_empty() {
+            let truncated: String = fp.summary.chars().take(240).collect();
+            println!("       summary: {truncated}");
+        }
+        let verdict = prompt_verdict(
+            &stdin,
+            FP_VERDICTS,
+            "    [f]alse_positive / [w]rongly_flagged / in_scope_e[x]tra / s[k]ip",
+        )?;
+        if verdict == "skip" {
+            continue;
+        }
+        let note = prompt_note(&stdin)?;
+        store.record_verdict(
+            args.run_id,
+            "false_positive",
+            &fp.title,
+            &verdict,
+            note.as_deref(),
+            now_ms,
+        )?;
+        println!("    recorded: {verdict}");
+    }
+
+    let final_verdicts = store.load_verdicts(args.run_id)?;
+    println!();
+    println!("--- summary ---");
+    print_verdict_tally(&final_verdicts, &stored_score, run.agent_findings.len());
+    Ok(())
+}
+
+fn prompt_verdict(
+    stdin: &std::io::Stdin,
+    options: &[(&str, &str)],
+    menu: &str,
+) -> Result<String> {
+    use std::io::Write as _;
+    loop {
+        println!("{menu}");
+        print!("    > ");
+        std::io::stdout().flush().ok();
+        let mut line = String::new();
+        stdin.lock().read_line(&mut line).context("reading verdict")?;
+        let key = line.trim().to_ascii_lowercase();
+        if let Some((_, verdict)) = options.iter().find(|(k, _)| *k == key) {
+            return Ok((*verdict).to_string());
+        }
+        println!("    unrecognised — try again.");
+    }
+}
+
+fn prompt_note(stdin: &std::io::Stdin) -> Result<Option<String>> {
+    use std::io::Write as _;
+    print!("    note (optional, blank to skip) > ");
+    std::io::stdout().flush().ok();
+    let mut line = String::new();
+    stdin.lock().read_line(&mut line).context("reading note")?;
+    let trimmed = line.trim();
+    Ok(if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    })
+}
+
+fn print_verdict_tally(
+    verdicts: &[ReviewVerdict],
+    stored_score: &BenchmarkScore,
+    agent_total: usize,
+) {
+    let mut counts: std::collections::BTreeMap<(String, String), u32> =
+        std::collections::BTreeMap::new();
+    for v in verdicts {
+        *counts.entry((v.kind.clone(), v.verdict.clone())).or_default() += 1;
+    }
+    if counts.is_empty() {
+        println!("no verdicts recorded.");
+        return;
+    }
+    for ((kind, verdict), n) in &counts {
+        println!("  {kind:<16} {verdict:<20} {n}");
+    }
+    let scoring_failures: u32 = counts
+        .iter()
+        .filter(|((kind, verdict), _)| kind == "miss" && verdict == "scoring_failure")
+        .map(|(_, n)| *n)
+        .sum();
+    if scoring_failures > 0 {
+        let expected = stored_score.matches.len() + stored_score.misses.len();
+        let adjusted_matches = u32::try_from(stored_score.matches.len()).unwrap_or(u32::MAX) + scoring_failures;
+        #[allow(clippy::cast_precision_loss)]
+        let adjusted_coverage = if expected > 0 {
+            f32::from(u16::try_from(adjusted_matches).unwrap_or(u16::MAX)) / expected as f32 * 100.0
+        } else {
+            0.0
+        };
+        println!(
+            "  → coverage after review: {adjusted_coverage:.1}% ({adjusted_matches}/{expected})"
+        );
+    }
+    let _ = agent_total; // surface for future report extensions.
 }

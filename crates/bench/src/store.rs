@@ -25,6 +25,19 @@ CREATE TABLE IF NOT EXISTS bench_runs (
 
 CREATE INDEX IF NOT EXISTS bench_runs_target_idx
     ON bench_runs (target_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS bench_review_verdicts (
+    run_id      INTEGER NOT NULL,
+    kind        TEXT NOT NULL,        -- 'miss' | 'false_positive'
+    label       TEXT NOT NULL,        -- expected.class for miss, agent.title for fp
+    verdict     TEXT NOT NULL,        -- 'actual_miss' | 'scoring_failure' | 'false_positive' | 'wrongly_flagged' | 'in_scope_extra'
+    note        TEXT,
+    reviewed_at INTEGER NOT NULL,
+    PRIMARY KEY (run_id, kind, label)
+);
+
+CREATE INDEX IF NOT EXISTS bench_review_verdicts_run_idx
+    ON bench_review_verdicts (run_id);
 ";
 
 pub struct BenchStore {
@@ -112,6 +125,62 @@ impl BenchStore {
         Ok(rows)
     }
 
+    /// Upsert a review verdict for one (run, kind, label) tuple.
+    /// Re-reviewing the same item overwrites the previous verdict —
+    /// the table's primary key is `(run_id, kind, label)` so a second
+    /// `record_verdict` call updates rather than inserts.
+    pub fn record_verdict(
+        &self,
+        run_id: i64,
+        kind: &str,
+        label: &str,
+        verdict: &str,
+        note: Option<&str>,
+        reviewed_at_ms: i64,
+    ) -> Result<(), BenchError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| BenchError::Other("lock poisoned".into()))?;
+        conn.execute(
+            "INSERT INTO bench_review_verdicts (run_id, kind, label, verdict, note, reviewed_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(run_id, kind, label) DO UPDATE SET
+                 verdict = excluded.verdict,
+                 note    = excluded.note,
+                 reviewed_at = excluded.reviewed_at",
+            params![run_id, kind, label, verdict, note, reviewed_at_ms],
+        )?;
+        Ok(())
+    }
+
+    /// All verdicts recorded for one run, in insertion order.
+    pub fn load_verdicts(&self, run_id: i64) -> Result<Vec<ReviewVerdict>, BenchError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| BenchError::Other("lock poisoned".into()))?;
+        let mut stmt = conn.prepare(
+            "SELECT kind, label, verdict, note, reviewed_at
+             FROM bench_review_verdicts
+             WHERE run_id = ?
+             ORDER BY reviewed_at ASC",
+        )?;
+        let rows: Vec<ReviewVerdict> = stmt
+            .query_map([run_id], |r| {
+                Ok(ReviewVerdict {
+                    run_id,
+                    kind: r.get(0)?,
+                    label: r.get(1)?,
+                    verdict: r.get(2)?,
+                    note: r.get(3)?,
+                    reviewed_at_ms: r.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     /// Load one run's full `run_json` + `score_json` by id.
     pub fn load_run(&self, id: i64) -> Result<Option<BenchFullRow>, BenchError> {
         let conn = self
@@ -149,6 +218,26 @@ pub struct BenchHistoryRow {
     pub matches: u32,
     pub misses: u32,
     pub false_positives: u32,
+}
+
+/// One human review verdict on a (`miss` | `false_positive`) item
+/// from a recorded run. Persisted in `bench_review_verdicts`.
+/// Verdict values are interpreted by the CLI; the store treats them
+/// as opaque strings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewVerdict {
+    pub run_id: i64,
+    /// `"miss"` or `"false_positive"`.
+    pub kind: String,
+    /// For misses: the expected class. For false positives: the
+    /// agent finding's title.
+    pub label: String,
+    /// Free-form. Conventional values: `actual_miss`,
+    /// `scoring_failure`, `false_positive`, `wrongly_flagged`,
+    /// `in_scope_extra`.
+    pub verdict: String,
+    pub note: Option<String>,
+    pub reviewed_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,5 +308,70 @@ mod tests {
         let row = store.load_run(id).unwrap().unwrap();
         assert_eq!(row.target_id, "t1");
         assert_eq!(row.run_json, "{\"x\":1}");
+    }
+
+    #[test]
+    fn record_verdict_inserts_and_loads_back() {
+        let store = BenchStore::open_in_memory().unwrap();
+        let run_id = store
+            .record("t1", None, "{}", &stub_score(), 100)
+            .unwrap();
+        store
+            .record_verdict(run_id, "miss", "reentrancy", "actual_miss", Some("agent missed it"), 200)
+            .unwrap();
+        store
+            .record_verdict(run_id, "false_positive", "Bad finding", "wrongly_flagged", None, 201)
+            .unwrap();
+        let v = store.load_verdicts(run_id).unwrap();
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0].label, "reentrancy");
+        assert_eq!(v[0].verdict, "actual_miss");
+        assert_eq!(v[0].note.as_deref(), Some("agent missed it"));
+        assert_eq!(v[1].kind, "false_positive");
+    }
+
+    #[test]
+    fn record_verdict_upserts_on_repeat() {
+        let store = BenchStore::open_in_memory().unwrap();
+        let run_id = store
+            .record("t1", None, "{}", &stub_score(), 100)
+            .unwrap();
+        store
+            .record_verdict(run_id, "miss", "reentrancy", "actual_miss", None, 200)
+            .unwrap();
+        // Re-review with a new verdict.
+        store
+            .record_verdict(run_id, "miss", "reentrancy", "scoring_failure", Some("rework needed"), 300)
+            .unwrap();
+        let v = store.load_verdicts(run_id).unwrap();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].verdict, "scoring_failure");
+        assert_eq!(v[0].note.as_deref(), Some("rework needed"));
+        assert_eq!(v[0].reviewed_at_ms, 300);
+    }
+
+    #[test]
+    fn load_verdicts_for_unknown_run_is_empty() {
+        let store = BenchStore::open_in_memory().unwrap();
+        assert!(store.load_verdicts(9999).unwrap().is_empty());
+    }
+
+    #[test]
+    fn verdicts_for_two_runs_are_isolated() {
+        let store = BenchStore::open_in_memory().unwrap();
+        let a = store.record("t1", None, "{}", &stub_score(), 100).unwrap();
+        let b = store.record("t1", None, "{}", &stub_score(), 200).unwrap();
+        store
+            .record_verdict(a, "miss", "x", "actual_miss", None, 300)
+            .unwrap();
+        store
+            .record_verdict(b, "miss", "y", "scoring_failure", None, 400)
+            .unwrap();
+        let va = store.load_verdicts(a).unwrap();
+        let vb = store.load_verdicts(b).unwrap();
+        assert_eq!(va.len(), 1);
+        assert_eq!(vb.len(), 1);
+        assert_eq!(va[0].label, "x");
+        assert_eq!(vb[0].label, "y");
     }
 }

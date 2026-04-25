@@ -237,15 +237,6 @@ fn session_delete_with_yes_removes_the_row() {
 }
 
 #[test]
-fn recon_help_lists_the_agent_flag() {
-    audit()
-        .args(["recon", "--help"])
-        .assert()
-        .success()
-        .stdout(contains("--agent"));
-}
-
-#[test]
 fn recon_help_lists_agent_budget_flags() {
     audit()
         .args(["recon", "--help"])
@@ -287,7 +278,7 @@ fn env_var_configured_provider_shows_in_agent_starts_up_message() {
         .env("HOME", tmp.path())
         .env("XDG_CACHE_HOME", tmp.path())
         .current_dir(tmp.path())
-        .args(["recon", "/tmp/nowhere", "--agent"])
+        .args(["recon", "/tmp/nowhere"])
         .assert();
     let combined = format!(
         "{}{}",
