@@ -64,3 +64,22 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     FOREIGN KEY (session_id, turn_index)
         REFERENCES turns(session_id, turn_index) ON DELETE CASCADE
 );
+
+-- Set 9 / CP9.6 — self-critique infrastructure.
+--
+-- `session_feedback` carries every `record_limitation` and
+-- `record_suspicion` call the agent makes during a session. One row
+-- per call. The `kind` discriminator gives `'limitation' | 'suspicion'
+-- | 'self_critique'`; `payload_json` is the tool's input as the agent
+-- supplied it.
+CREATE TABLE IF NOT EXISTS session_feedback (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id    TEXT    NOT NULL,
+    kind          TEXT    NOT NULL,
+    payload_json  TEXT    NOT NULL,
+    recorded_at_ms INTEGER NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS session_feedback_session_idx
+    ON session_feedback (session_id, kind);

@@ -22,6 +22,7 @@ pub mod read_file;
 pub mod resolve_onchain_contract;
 pub mod resolve_onchain_system;
 pub mod scratchpad_tools;
+pub mod self_critique;
 pub mod static_call;
 
 pub use analyze_project::AnalyzeProject;
@@ -38,6 +39,11 @@ pub use read_file::ReadFile;
 pub use resolve_onchain_contract::ResolveOnchainContract;
 pub use resolve_onchain_system::ResolveOnchainSystem;
 pub use scratchpad_tools::{ScratchpadHistory, ScratchpadRead, ScratchpadWrite};
+pub use self_critique::{
+    FinalizeSelfCritique, LimitationRecord, LimitationSeverity, RecordLimitation, RecordSuspicion,
+    SelfCritiqueRecord, SuspicionRecord, FINALIZE_SELF_CRITIQUE_NAME, RECORD_LIMITATION_NAME,
+    RECORD_SUSPICION_NAME,
+};
 pub use static_call::StaticCall;
 
 use crate::tool::ToolRegistry;

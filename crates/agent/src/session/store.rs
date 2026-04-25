@@ -49,7 +49,7 @@ const SCHEMA_SQL: &str = include_str!("schema.sql");
 /// - v1: initial tables.
 /// - v2: `final_report_notes` column.
 /// - v3: `scratchpads` + `scratchpad_revisions` tables (Set 8).
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// Shared handle to the session database.
 ///
@@ -142,6 +142,10 @@ impl SessionStore {
         // against a fresh DB or against a pre-existing v3+ DB is safe.
         basilisk_scratchpad::apply_schema(conn)
             .map_err(|e| SessionError::SchemaMigration(format!("scratchpad: {e}")))?;
+        // v4: session_feedback table is created by the schema_sql
+        // include above (IF NOT EXISTS). Nothing extra needed for
+        // pre-v4 DBs since the new table is additive — no column
+        // changes on existing tables.
         // Always set the canonical version after migrations.
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
@@ -269,6 +273,70 @@ impl SessionStore {
             ],
         )?;
         Ok(())
+    }
+
+    // --- Set 9 / CP9.6 — self-critique feedback surface --------------
+
+    /// Append one feedback row. `kind` is `"limitation"`,
+    /// `"suspicion"`, or `"self_critique"`; `payload_json` is the
+    /// tool input as the agent supplied it.
+    pub fn record_feedback(
+        &self,
+        session_id: &SessionId,
+        kind: &str,
+        payload_json: &str,
+    ) -> Result<(), SessionError> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO session_feedback
+                (session_id, kind, payload_json, recorded_at_ms)
+             VALUES (?, ?, ?, ?)",
+            params![
+                session_id.as_str(),
+                kind,
+                payload_json,
+                to_millis(SystemTime::now()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Count feedback rows of the given kind for a session. Used by
+    /// the ordering rail (CP9.7): `finalize_report` is only accepted
+    /// after at least one `self_critique` row exists.
+    pub fn count_feedback(
+        &self,
+        session_id: &SessionId,
+        kind: &str,
+    ) -> Result<u64, SessionError> {
+        let conn = self.lock()?;
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_feedback WHERE session_id = ? AND kind = ?",
+            params![session_id.as_str(), kind],
+            |r| r.get(0),
+        )?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
+
+    /// List every feedback row for a session, in insertion order.
+    /// Used by the CLI and by test introspection. Returns a vec of
+    /// `(kind, payload_json, recorded_at_ms)`.
+    pub fn list_feedback(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<(String, String, i64)>, SessionError> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT kind, payload_json, recorded_at_ms
+             FROM session_feedback WHERE session_id = ?
+             ORDER BY id ASC",
+        )?;
+        let rows = stmt
+            .query_map([session_id.as_str()], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     /// Attach the agent's `finalize_report` payload to the session.
