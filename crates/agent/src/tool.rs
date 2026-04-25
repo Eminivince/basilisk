@@ -15,11 +15,13 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use alloy_primitives::Address;
 use async_trait::async_trait;
 use basilisk_core::Config;
 use basilisk_git::RepoCache;
 use basilisk_github::GithubClient;
 use basilisk_llm::ToolDefinition;
+use basilisk_onchain::ResolvedSystem;
 use basilisk_scratchpad::{Scratchpad, ScratchpadStore};
 use serde::{Deserialize, Serialize};
 
@@ -98,6 +100,18 @@ pub struct ToolContext {
     /// tests that don't need persistence; tools fall back to
     /// operator-visible JSONL in that case.
     pub session_store: Option<Arc<crate::session::SessionStore>>,
+      /// Session-scoped cache of `ResolvedSystem`s keyed by root
+    /// address. The `resolve_onchain_system` tool writes here on
+    /// success; the vuln-reasoning analytical tools
+    /// (`find_callers_of`, `trace_state_dependencies`) read from
+    /// here so they operate against whatever the agent already
+    /// resolved rather than re-resolving.
+    pub resolved_systems: Arc<Mutex<HashMap<Address, ResolvedSystem>>>,
+    /// Optional execution backend for forked-state simulation and
+    /// Foundry-test `PoC` runs. `None` → exec-dependent tools
+    /// (`simulate_call_chain`, `build_and_run_foundry_test`) return
+    /// a typed error on dispatch.
+    pub exec: Option<Arc<dyn basilisk_exec::ExecutionBackend>>,
 }
 
 impl ToolContext {
@@ -120,6 +134,8 @@ impl ToolContext {
             scratchpad: None,
             scratchpad_store: None,
             session_store: None,
+            resolved_systems: Arc::new(Mutex::new(HashMap::new())),
+            exec: None,
         }
     }
 }

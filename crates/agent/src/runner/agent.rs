@@ -78,6 +78,19 @@ pub struct AgentRunner {
     /// prompt. `None` runs without working memory — scratchpad
     /// tools return a typed error on dispatch.
     pub(crate) scratchpad_store: Option<Arc<basilisk_scratchpad::ScratchpadStore>>,
+    /// Optional execution backend (anvil / mock). Threaded into
+    /// `ToolContext.exec` so vuln tools can spawn forks and run
+    /// simulations. `None` → exec-dependent tools return a typed
+    /// error. Set via [`AgentRunner::with_exec`].
+    pub(crate) exec: Option<Arc<dyn basilisk_exec::ExecutionBackend>>,
+    /// Live cache of resolved systems this session. Re-created per
+    /// session in [`drive_loop`]; shared via `ToolContext` so
+    /// `resolve_onchain_system` can populate it and
+    /// `find_callers_of` / `trace_state_dependencies` can read
+    /// from it.
+    #[allow(clippy::type_complexity)]
+    pub(crate) resolved_systems_default:
+        std::marker::PhantomData<()>,
 }
 
 impl AgentRunner {
@@ -106,6 +119,8 @@ impl AgentRunner {
             knowledge: None,
             engagement_id: None,
             scratchpad_store: None,
+            exec: None,
+            resolved_systems_default: std::marker::PhantomData,
         }
     }
 
@@ -254,6 +269,8 @@ impl AgentRunner {
             scratchpad,
             scratchpad_store: self.scratchpad_store.clone(),
             session_store: Some(Arc::clone(&self.store)),
+            resolved_systems: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            exec: self.exec.clone(),
         }
     }
 

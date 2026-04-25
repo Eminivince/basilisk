@@ -139,7 +139,15 @@ impl Tool for ResolveOnchainSystem {
         }
 
         match ingester.resolve_system(address, limits).await {
-            Ok(s) => ToolResult::ok(s),
+            Ok(s) => {
+                // Cache the resolved system so vuln-reasoning analytical
+                // tools (find_callers_of, trace_state_dependencies) can
+                // operate on it without re-resolving.
+                if let Ok(mut guard) = ctx.resolved_systems.lock() {
+                    guard.insert(address, s.clone());
+                }
+                ToolResult::ok(s)
+            }
             Err(e) => {
                 let retryable = matches!(
                     &e,

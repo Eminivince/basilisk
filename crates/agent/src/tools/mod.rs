@@ -24,6 +24,7 @@ pub mod resolve_onchain_system;
 pub mod scratchpad_tools;
 pub mod self_critique;
 pub mod static_call;
+pub mod vuln_tools;
 
 pub use analyze_project::AnalyzeProject;
 pub use classify_target::ClassifyTarget;
@@ -45,6 +46,11 @@ pub use self_critique::{
     RECORD_SUSPICION_NAME,
 };
 pub use static_call::StaticCall;
+pub use vuln_tools::{
+    BuildAndRunFoundryTestTool, FindCallersOfTool, SimulateCallChainTool,
+    TraceStateDependenciesTool, BUILD_AND_RUN_FOUNDRY_TEST_NAME, FIND_CALLERS_OF_NAME,
+    SIMULATE_CALL_CHAIN_NAME, TRACE_STATE_DEPENDENCIES_NAME,
+};
 
 use crate::tool::ToolRegistry;
 

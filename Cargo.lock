@@ -855,8 +855,10 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "async-trait",
+ "basilisk-analyze",
  "basilisk-core",
  "basilisk-embeddings",
+ "basilisk-exec",
  "basilisk-explorers",
  "basilisk-git",
  "basilisk-github",
