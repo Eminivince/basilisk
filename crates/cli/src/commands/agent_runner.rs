@@ -426,14 +426,16 @@ fn build_runner(flags: &AgentFlags, config: &Config) -> Result<(AgentRunner, Pat
     // Set 9 / CP9.12 — registry + prompt selection depends on
     // `--vuln`. Recon flows keep standard_registry + whatever
     // system_prompt loaded (recon_v2.md by default). Vuln flows
-    // swap to vuln_registry (25 tools) and VULN_V1_PROMPT unless
+    // swap to vuln_registry (25 tools) and VULN_V2_PROMPT unless
     // the operator overrode via `--system-prompt` /
-    // BASILISK_SYSTEM_PROMPT.
+    // BASILISK_SYSTEM_PROMPT. v2 (Set 9.5) strengthens the
+    // structured-recording discipline that v1 (Set 9) treated as
+    // optional; vuln_v1.md remains in-tree for A/B comparison.
     let (registry, system_prompt_selected) = if flags.vuln {
         let prompt = if flags.system_prompt.is_some() {
             system_prompt
         } else {
-            basilisk_agent::VULN_V1_PROMPT.to_string()
+            basilisk_agent::VULN_V2_PROMPT.to_string()
         };
         (basilisk_agent::vuln_registry(), prompt)
     } else {

@@ -73,11 +73,13 @@ impl Tool for RecordLimitation {
     }
 
     fn description(&self) -> &'static str {
-        "Record a limitation you hit during this audit — something that prevented you from fully \
-         answering a question, and what would have let you answer it. These records drive what \
-         Basilisk builds next; be specific. Call this whenever you bump into a tool you wished \
-         you had, data you couldn't access, or a decision you had to make on incomplete \
-         information."
+        "Call this whenever a tool returned less than you needed, a data source was unavailable, \
+         or a capability didn't exist. These are not failures — they are the tool's roadmap. Be \
+         specific: what did you want to do, what stopped you, what would have helped? Every \
+         limitation noted today shapes what Basilisk gains tomorrow. A run with zero limitations \
+         on a complex target almost always means the agent suppressed them — limitations \
+         mentioned only in the final markdown are invisible to the development loop, so surface \
+         them here even when they feel small."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -118,10 +120,13 @@ impl Tool for RecordSuspicion {
     }
 
     fn description(&self) -> &'static str {
-        "Record a suspicion — something that feels off but you can't prove to finding-grade. A \
-         noted suspicion that a human reviewer later confirms is worth more than ten \
-         high-confidence findings that turn out to be noise. Your boundary of confidence is \
-         among the most valuable signals you produce. Call freely."
+        "Use this whenever you've identified something that looks off but you can't confirm \
+         it's a bug. Suspicions are not weak findings — they are structurally different. They \
+         say 'something here deserves attention, and here's why I can't finish the investigation \
+         myself.' Surface generously. A run with zero suspicions on a complex target means the \
+         agent didn't try. Suspicions written into the final markdown report instead of through \
+         this tool are invisible to Basilisk's memory and cannot be retrieved by future audits — \
+         use this tool, then optionally also mention them in the report."
     }
 
     fn input_schema(&self) -> serde_json::Value {

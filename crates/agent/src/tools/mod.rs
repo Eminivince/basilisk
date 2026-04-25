@@ -156,10 +156,20 @@ pub fn vuln_registry() -> ToolRegistry {
     reg
 }
 
-/// Embedded vuln-reasoning system prompt. Use this when building an
-/// [`AgentRunner`](crate::AgentRunner) for `--vuln` sessions. Operators
-/// can override via `BASILISK_SYSTEM_PROMPT=<path>`; this is the
-/// compiled-in default.
+/// Embedded vuln-reasoning system prompt — Set 9.5's `vuln_v2.md`.
+/// Use this when building an [`AgentRunner`](crate::AgentRunner) for
+/// `--vuln` sessions. Operators can override via
+/// `BASILISK_SYSTEM_PROMPT=<path>`; this is the compiled-in default.
+///
+/// Strengthens the structured-recording discipline beyond
+/// [`VULN_V1_PROMPT`]: makes `record_suspicion` and `record_limitation`
+/// non-negotiable rather than encouraged, adds an explicit phase-
+/// transition cadence for `scratchpad_read`, and ships a pre-
+/// finalization checklist that catches concerns leaking into the
+/// markdown report without structured records.
+pub const VULN_V2_PROMPT: &str = include_str!("../prompts/vuln_v2.md");
+
+/// Set-9 vuln prompt. Kept for A/B comparison; not the default.
 pub const VULN_V1_PROMPT: &str = include_str!("../prompts/vuln_v1.md");
 
 #[cfg(test)]
@@ -204,6 +214,23 @@ mod tests {
             (1_200..=3_500).contains(&words),
             "vuln_v1.md outside expected length: {words} words"
         );
+    }
+
+    #[test]
+    fn vuln_v2_prompt_is_substantive_and_carries_discipline() {
+        let words = VULN_V2_PROMPT.split_whitespace().count();
+        assert!(
+            (1_500..=3_500).contains(&words),
+            "vuln_v2.md outside expected length: {words} words"
+        );
+        // v2's load-bearing additions over v1.
+        assert!(VULN_V2_PROMPT.contains("non-negotiable"));
+        assert!(VULN_V2_PROMPT.contains("structured recording"));
+        assert!(VULN_V2_PROMPT.contains("Pre-finalization checklist"));
+        assert!(VULN_V2_PROMPT.contains("Phase transitions"));
+        // Bare-minimum thresholds the prompt asserts.
+        assert!(VULN_V2_PROMPT.contains("5+ suspicions"));
+        assert!(VULN_V2_PROMPT.contains("1+ limitations"));
     }
 
     #[test]
