@@ -16,6 +16,7 @@ basilisk-agent = { path = "crates/agent", version = "0.1.0" }
 basilisk-cache = { path = "crates/cache", version = "0.1.0" }
 basilisk-core = { path = "crates/core", version = "0.1.0" }
 basilisk-embeddings = { path = "crates/embeddings", version = "0.1.0" }
+basilisk-exec = { path = "crates/exec", version = "0.1.0" }
 basilisk-explorers = { path = "crates/explorers", version = "0.1.0" }
 basilisk-git = { path = "crates/git", version = "0.1.0" }
 basilisk-github = { path = "crates/github", version = "0.1.0" }
