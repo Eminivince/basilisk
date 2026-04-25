@@ -41,9 +41,22 @@ static ALL: &[&BenchmarkTarget] = &[
 // received a disproportionate share due to a bad health-factor
 // calculation. Loss: ~$197M.
 //
-// Primary contract: Euler main contract (proxy); the vulnerability
-// lives in the EToken implementation's `donateToReserves` and
-// `liquidate` interaction.
+// Set 9.5 / CP9.5.7 — re-targeted from the dispatcher
+// (0x27182842…25d3) to the eDAI proxy. The dispatcher is just a
+// router via delegatecall; the buggy code lives in the EToken
+// module implementation that eDAI's proxy delegates to. From the
+// eDAI address, `resolve_onchain_system` will pull in:
+//   - the EToken module implementation (donateToReserves + the
+//     bad balance-tracking math)
+//   - the dispatcher itself (via Proxy.sol → Euler.dispatch)
+//   - the Liquidation module (the second half of the exploit)
+// Pointing at eDAI sets the agent up to find the donation primitive
+// without requiring it to first guess "the dispatcher is just an
+// indirection — descend into the modules".
+//
+// Run B (Opus, $8.78, 0% coverage on the Euler dispatcher) made the
+// case for this re-target: Opus's self-critique explicitly noted
+// it would have audited the modules on a re-run.
 
 static EULER_EXPECTED: [ExpectedFinding; 2] = [
     ExpectedFinding {
@@ -64,7 +77,9 @@ static EULER_2023: BenchmarkTarget = BenchmarkTarget {
     id: "euler-2023",
     name: "Euler Finance — donation + self-liquidation",
     chain: "ethereum",
-    target_address: address!("27182842E098f60e3D576794A5bFFb0777E025d3"),
+    // eDAI proxy. Re-targeted from the dispatcher in CP9.5.7 to
+    // give the agent direct access to the EToken module surface.
+    target_address: address!("e025E3ca2bE02316033184551D4d3Aa22024D9DC"),
     // Block 16_817_995 is immediately before the exploit (16_817_996
     // contained the first malicious tx).
     fork_block: 16_817_995,
@@ -76,7 +91,7 @@ static EULER_2023: BenchmarkTarget = BenchmarkTarget {
         "https://medium.com/@omniscia.io/euler-finance-incident-post-mortem-1ce077c28454",
         "https://blog.chainalysis.com/reports/euler-finance-flash-loan-attack/",
     ],
-    notes: "Complex multi-step: flash loan → deposit → self-liquidate after donateToReserves. Agent may surface just the donateToReserves weakness OR the liquidation mis-pricing; either counts.",
+    notes: "Re-targeted (CP9.5.7) from the dispatcher (0x27182842…25d3) to the eDAI proxy (0xe025E3ca…D9DC). The dispatcher is module-routing only — the buggy donateToReserves + liquidation interaction lives in the EToken module that eDAI delegates to. Complex multi-step exploit: flash loan → deposit → self-liquidate after donateToReserves. Agent may surface just the donateToReserves weakness OR the liquidation mis-pricing; either counts.",
 };
 
 // ---------- Visor Finance, December 2021 -----------------------------
@@ -118,7 +133,7 @@ static VISOR_2021: BenchmarkTarget = BenchmarkTarget {
         "https://visor.finance/posts/vault-compromise-post-mortem",
         "https://rekt.news/visor-rekt/",
     ],
-    notes: "Good first benchmark — narrow scope, well-documented.",
+    notes: "DEFERRED (CP9.5.7): Visor's vault was selfdestructed post-exploit. The agent's resolve_onchain_contract reads chain state at `latest`, not at fork_block — so against this target it sees `is_contract: false` and reports the address as an EOA (Run #4 confirmed this behavior). The fix is threading fork_block awareness through the agent's chain-reading tools, which lands in a future set. Until then, this benchmark is structurally broken; `audit bench run` still includes it for completeness, but expect 0% coverage. Skip via `audit bench run <other-id>` if you want a meaningful suite total.",
 };
 
 // ---------- Cream Finance, October 2021 ------------------------------
@@ -147,6 +162,15 @@ static CREAM_OCT_2021: BenchmarkTarget = BenchmarkTarget {
     id: "cream-oct-2021",
     name: "Cream Finance — flash-loan price oracle manipulation",
     chain: "ethereum",
+    // CREAM token contract. CP9.5.7 audit: the *vulnerable contract*
+    // is the IronBank lending pool / cyToken (one of several
+    // markets exploited via the manipulated oracle), not the CREAM
+    // token itself. Keeping this address because (a) the post-mortem
+    // references it directly, (b) `resolve_onchain_system` from
+    // CREAM will pull in the lending pool via its references, (c) a
+    // future re-target to the specific cyToken proxy is a task for
+    // when the suite is run regularly enough to justify the
+    // research.
     target_address: address!("d06527D5e56A3495252A528C4987003b712860eE"),
     fork_block: 13_412_088,
     exploit_block: 13_412_089,
@@ -157,7 +181,7 @@ static CREAM_OCT_2021: BenchmarkTarget = BenchmarkTarget {
         "https://rekt.news/cream-rekt-2/",
         "https://medium.com/cream-finance/c-r-e-a-m-finance-post-mortem-amp-exploit-6ceb20a630c5",
     ],
-    notes: "Oracle-manipulation class. Agent should surface the missing TWAP and the spot-price dependency.",
+    notes: "Oracle-manipulation class. Agent should surface the missing TWAP and the spot-price dependency. Note: target_address points at the CREAM token, not the directly-exploited IronBank cyToken — see code comment for re-target rationale.",
 };
 
 // ---------- Beanstalk Farms, April 2022 ------------------------------
@@ -186,6 +210,14 @@ static BEANSTALK_APRIL_2022: BenchmarkTarget = BenchmarkTarget {
     id: "beanstalk-apr-2022",
     name: "Beanstalk Farms — governance via flash-loaned voting weight",
     chain: "ethereum",
+    // Beanstalk's diamond proxy. The vulnerable function
+    // (emergencyCommit + the missing timelock check on flash-loan-
+    // acquired voting power) lives in a governance facet attached
+    // to this diamond. CP9.5.7 keeps this address because a diamond
+    // IS the entry point — `resolve_onchain_system` walks
+    // DiamondCut events (or facet enumeration calls) to surface
+    // the governance facet from here. Unlike Euler's dispatcher,
+    // there's no clearer "vulnerable module" address to point at.
     target_address: address!("C1E088fC1323b20BCBee9bd1B9fC9546db5624C5"),
     fork_block: 14_602_788,
     exploit_block: 14_602_789,
@@ -196,7 +228,7 @@ static BEANSTALK_APRIL_2022: BenchmarkTarget = BenchmarkTarget {
         "https://rekt.news/beanstalk-rekt/",
         "https://bean.money/blog/beanstalk-governance-exploit",
     ],
-    notes: "Governance class. Agent should connect the missing timelock with flash-loan voting-weight acquisition.",
+    notes: "Governance class. Diamond pattern — the buggy emergencyCommit logic is in a governance facet reached via DiamondCut. Agent should connect the missing timelock with flash-loan voting-weight acquisition.",
 };
 
 // ---------- Nomad Bridge, August 2022 --------------------------------
@@ -226,7 +258,15 @@ static NOMAD_AUG_2022: BenchmarkTarget = BenchmarkTarget {
     id: "nomad-aug-2022",
     name: "Nomad Bridge — zero-root replay via bad initialization",
     chain: "ethereum",
-    target_address: address!("88A69B4E698A4B090DF6CF5Bd7B2D47325Ad30A3"),
+    // Replica proxy. CP9.5.7 re-target — the original
+    // target_address (0x88A69B4E…30A3) was the bridge home contract;
+    // the bug actually lived in the Replica (the message-verifier
+    // side) where the zero-hash was misclassified as a valid
+    // confirmed root during initialization. Pointing at the Replica
+    // proxy gets the agent directly to the buggy `process` /
+    // `messages` storage path. The Replica is upgrade-managed;
+    // resolve_onchain_system pulls in the implementation.
+    target_address: address!("b92336759618f55bd0f8313bd843604592e27bd8"),
     fork_block: 15_259_100,
     exploit_block: 15_259_101,
     vulnerability_classes: &["initialization", "replay", "bridge", "signature"],
@@ -236,7 +276,7 @@ static NOMAD_AUG_2022: BenchmarkTarget = BenchmarkTarget {
         "https://rekt.news/nomad-rekt/",
         "https://medium.com/nomad-xyz-blog/nomad-bridge-hack-root-cause-analysis-875ad2e5aacd",
     ],
-    notes: "Initialization class. The zero-hash-as-valid-root is the specific primitive; agent may describe it as initialization-bug or replay.",
+    notes: "Re-targeted (CP9.5.7) from the home contract (0x88A69B4E…30A3) to the Replica proxy. The bug lives on the message-verification side: the zero-hash was treated as a valid confirmed-message root after a bad initialization, so any message with zero proof bytes succeeded `process()`. Initialization or replay class — both count.",
 };
 
 #[cfg(test)]

@@ -213,6 +213,20 @@ async fn run_run(args: &RunArgs, config: &Config) -> Result<()> {
             t.id, t.name, t.fork_block
         );
         let target_input = format!("{}/0x{}", t.chain, hex::encode(t.target_address.as_slice()));
+        // Set 9.5 / CP9.5.7 — thread fork_block + target identity into
+        // the operator note so build_initial_message_for surfaces it
+        // to the agent. Useful for benchmark targets where current
+        // chain state diverges from the pre-exploit state (Visor's
+        // selfdestruct is the leading example).
+        flags.note = Some(format!(
+            "Bench target: {} (fork_block={}, exploit_block={}). The pinned \
+             fork_block is the canonical state — current `latest` chain state \
+             may differ. Vulnerability classes: {}.",
+            t.id,
+            t.fork_block,
+            t.exploit_block,
+            t.vulnerability_classes.join(", "),
+        ));
         let started = std::time::Instant::now();
         let outcome = match super::agent_runner::run_agent_with_outcome(
             &target_input,
