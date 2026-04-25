@@ -21,6 +21,9 @@ use basilisk_agent::{
     ToolCallRecord, TurnRecord, TurnRole,
 };
 use basilisk_core::Config;
+use basilisk_scratchpad::{
+    render_compact, render_markdown, ScratchpadStore, Section, SectionKey,
+};
 use clap::{Args, Subcommand, ValueEnum};
 
 use crate::commands::agent_runner::{self, AgentFlags};
@@ -35,6 +38,76 @@ pub enum SessionCmd {
     Resume(ResumeArgs),
     /// Delete a session (and its turns + tool calls) from the DB.
     Delete(DeleteArgs),
+    /// Inspect the agent's working-memory scratchpad for a session.
+    #[command(subcommand)]
+    Scratchpad(ScratchpadCmd),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ScratchpadCmd {
+    /// Render the scratchpad's full markdown, or a single section.
+    Show(ScratchpadShowArgs),
+    /// Quick counts-per-section summary.
+    Summary(ScratchpadSummaryArgs),
+    /// Export the scratchpad to a file.
+    Export(ScratchpadExportArgs),
+    /// Drop the scratchpad (and its revisions). Session row stays.
+    Delete(ScratchpadDeleteArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ScratchpadShowArgs {
+    /// Session id.
+    pub id: String,
+    /// Only render this section (e.g. `hypotheses`).
+    #[arg(long)]
+    pub section: Option<String>,
+    /// Render the scratchpad as it was at this revision index
+    /// (1-based; see `audit session scratchpad summary` for the
+    /// current tip).
+    #[arg(long)]
+    pub at_revision: Option<i64>,
+    /// Compact render instead of full (matches the system-prompt
+    /// embedding — useful when debugging how the agent saw it).
+    #[arg(long)]
+    pub compact: bool,
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct ScratchpadSummaryArgs {
+    pub id: String,
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct ScratchpadExportArgs {
+    pub id: String,
+    /// Output file path.
+    #[arg(long)]
+    pub output: PathBuf,
+    /// `markdown` (default) or `json`.
+    #[arg(long, value_enum, default_value_t = ScratchpadExportFormat::Markdown)]
+    pub format: ScratchpadExportFormat,
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ScratchpadExportFormat {
+    Markdown,
+    Json,
+}
+
+#[derive(Debug, Args)]
+pub struct ScratchpadDeleteArgs {
+    pub id: String,
+    #[arg(long)]
+    pub yes: bool,
+    #[arg(long)]
+    pub db: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -118,6 +191,7 @@ pub async fn run(cmd: &SessionCmd, config: &Config) -> Result<()> {
         SessionCmd::Show(args) => run_show(args),
         SessionCmd::Resume(args) => run_resume(args, config).await,
         SessionCmd::Delete(args) => run_delete(args),
+        SessionCmd::Scratchpad(cmd) => run_scratchpad(cmd),
     }
 }
 
@@ -356,6 +430,145 @@ fn format_time(ts: std::time::SystemTime) -> String {
         .map_or_else(|_| "0".into(), |d| format!("{}", d.as_secs()))
 }
 
+// --- scratchpad subcommand handlers ----------------------------------
+
+fn scratchpad_db_path(override_path: Option<&PathBuf>) -> PathBuf {
+    override_path.cloned().unwrap_or_else(default_db_path)
+}
+
+fn open_scratchpad_store(override_path: Option<&PathBuf>) -> Result<ScratchpadStore> {
+    let path = scratchpad_db_path(override_path);
+    ScratchpadStore::open(&path)
+        .with_context(|| format!("opening scratchpad DB at {}", path.display()))
+}
+
+fn run_scratchpad(cmd: &ScratchpadCmd) -> Result<()> {
+    match cmd {
+        ScratchpadCmd::Show(a) => run_scratchpad_show(a),
+        ScratchpadCmd::Summary(a) => run_scratchpad_summary(a),
+        ScratchpadCmd::Export(a) => run_scratchpad_export(a),
+        ScratchpadCmd::Delete(a) => run_scratchpad_delete(a),
+    }
+}
+
+fn run_scratchpad_show(args: &ScratchpadShowArgs) -> Result<()> {
+    let store = open_scratchpad_store(args.db.as_ref())?;
+
+    let sp = if let Some(rev) = args.at_revision {
+        let sections = store
+            .load_at_revision(&args.id, rev)
+            .context("loading historical scratchpad revision")?
+            .ok_or_else(|| anyhow::anyhow!("no revision {} for session {}", rev, &args.id))?;
+        let mut pad = basilisk_scratchpad::Scratchpad::new(&args.id);
+        pad.sections = sections;
+        pad
+    } else {
+        store
+            .load(&args.id)
+            .context("loading scratchpad")?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no scratchpad for session {} — was working memory enabled for this run?",
+                    &args.id,
+                )
+            })?
+    };
+
+    if let Some(section_name) = &args.section {
+        let key = SectionKey::parse(section_name)
+            .ok_or_else(|| anyhow::anyhow!("unknown section: {section_name}"))?;
+        let section = sp.sections.get(&key).ok_or_else(|| {
+            anyhow::anyhow!(
+                "section '{}' not present in this scratchpad",
+                key.wire_name()
+            )
+        })?;
+        let mut mini = basilisk_scratchpad::Scratchpad::new(&args.id);
+        mini.sections.clear();
+        mini.sections.insert(key, section.clone());
+        if args.compact {
+            print!("{}", render_compact(&mini));
+        } else {
+            print!("{}", render_markdown(&mini));
+        }
+        return Ok(());
+    }
+
+    if args.compact {
+        print!("{}", render_compact(&sp));
+    } else {
+        print!("{}", render_markdown(&sp));
+    }
+    Ok(())
+}
+
+fn run_scratchpad_summary(args: &ScratchpadSummaryArgs) -> Result<()> {
+    let store = open_scratchpad_store(args.db.as_ref())?;
+    let sp = store
+        .load(&args.id)
+        .context("loading scratchpad")?
+        .ok_or_else(|| anyhow::anyhow!("no scratchpad for session {}", &args.id))?;
+
+    let revs = store.list_revisions(&args.id).unwrap_or_default();
+    println!("session:          {}", sp.session_id);
+    println!("schema version:   {}", sp.schema_version);
+    println!("created_at (ms):  {}", sp.created_at_ms);
+    println!("updated_at (ms):  {}", sp.updated_at_ms);
+    println!("revisions stored: {}", revs.len());
+    println!("total items:      {}", sp.item_count());
+    println!("size bytes:       {}", sp.size_bytes());
+    println!();
+    println!("{:<32}  {:>6}  kind", "section", "items");
+    for (key, section) in &sp.sections {
+        let (n, kind) = match section {
+            Section::Items(i) => (i.items.len(), "items"),
+            Section::Prose(_) => (0, "prose"),
+        };
+        println!("{:<32}  {:>6}  {}", key.wire_name(), n, kind);
+    }
+    Ok(())
+}
+
+fn run_scratchpad_export(args: &ScratchpadExportArgs) -> Result<()> {
+    let store = open_scratchpad_store(args.db.as_ref())?;
+    let sp = store
+        .load(&args.id)
+        .context("loading scratchpad")?
+        .ok_or_else(|| anyhow::anyhow!("no scratchpad for session {}", &args.id))?;
+    let body = match args.format {
+        ScratchpadExportFormat::Markdown => render_markdown(&sp),
+        ScratchpadExportFormat::Json => {
+            serde_json::to_string_pretty(&sp).context("serialising scratchpad to JSON")?
+        }
+    };
+    std::fs::write(&args.output, body)
+        .with_context(|| format!("writing {}", args.output.display()))?;
+    println!("wrote {} ({:?})", args.output.display(), args.format);
+    Ok(())
+}
+
+fn run_scratchpad_delete(args: &ScratchpadDeleteArgs) -> Result<()> {
+    let store = open_scratchpad_store(args.db.as_ref())?;
+    if store.load(&args.id)?.is_none() {
+        println!("no scratchpad for session {}", &args.id);
+        return Ok(());
+    }
+    if !args.yes {
+        eprint!("Delete scratchpad for session {}? [y/N] ", &args.id);
+        io::stderr().flush().ok();
+        let mut buf = [0u8; 2];
+        let n = io::stdin().read(&mut buf).unwrap_or(0);
+        let ans = std::str::from_utf8(&buf[..n]).unwrap_or("").trim();
+        if ans != "y" && ans != "Y" {
+            println!("aborted");
+            return Ok(());
+        }
+    }
+    store.delete(&args.id)?;
+    println!("deleted scratchpad for session {}", &args.id);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,3 +592,4 @@ mod tests {
         assert!(!out.contains('\n'));
     }
 }
+

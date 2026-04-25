@@ -915,6 +915,7 @@ dependencies = [
  "basilisk-logging",
  "basilisk-onchain",
  "basilisk-project",
+ "basilisk-scratchpad",
  "basilisk-vector",
  "clap",
  "dirs",
