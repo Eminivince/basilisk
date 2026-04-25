@@ -63,11 +63,20 @@ pub fn pack_batches<'a>(
     out
 }
 
-/// Conservative token estimate: bytes / 4. Mirrors the heuristic in
-/// `basilisk-embeddings::batching` — over-counts for dense code,
-/// which keeps the packer on the safe side of the provider's cap.
+/// Conservative token estimate: byte length itself.
+///
+/// `bytes / 4` is the textbook heuristic for English-ish prose, but
+/// it badly under-counts for dense code where short symbols
+/// (`{`, `;`, `(`, identifiers) often tokenize as one token each.
+/// A real-world Voyage ingest crashed when a `bytes/4 = 100k` batch
+/// turned out to be 365k actual tokens — a 3.65× miss.
+///
+/// Using `bytes` directly is a strict upper bound: BPE-style
+/// tokenizers never produce more tokens than UTF-8 bytes (each
+/// token covers ≥1 byte). Trades smaller batches for never crossing
+/// the provider's per-batch cap.
 fn estimate_tokens(text: &str) -> usize {
-    text.len() / 4 + 1
+    text.len()
 }
 
 #[cfg(test)]
@@ -163,9 +172,11 @@ mod tests {
             max_tokens: 200,
             per_input: 16_000,
         };
-        // Each chunk: ~160 chars / 4 ≈ 40 estimated tokens. Five
-        // chunks total → one batch fits ~5 chunks (200/40); the
-        // packer should split when adding the 6th would exceed 200.
+        // Estimate is now byte-length itself. Each chunk text
+        // includes the title prefix `T\n\n` (3 bytes) plus the body.
+        // A 160-byte body chunk → ~163 estimated tokens; one fits in
+        // a 200-cap batch, two don't (326 > 200), so the packer must
+        // emit one batch per chunk.
         let body = "x".repeat(160);
         let mut all = Vec::new();
         for _ in 0..10 {
@@ -180,6 +191,30 @@ mod tests {
         // And the total chunk count is preserved.
         let count: usize = batches.iter().map(|b| b.len()).sum();
         assert_eq!(count, all.len());
+    }
+
+    #[test]
+    fn estimator_uses_bytes_not_chars_div_four() {
+        // Regression: a real Voyage ingest blew past the 120k-token
+        // cap because the old bytes/4 estimator under-counted dense
+        // code by 3.6x. Pin the new estimator to bytes so this can't
+        // recur silently.
+        let body = "x".repeat(1000);
+        assert_eq!(estimate_tokens(&body), 1000);
+        // And the packer should split a batch that would have fit
+        // under bytes/4 but not under bytes-as-estimate.
+        let provider = Stub {
+            max_batch: 32,
+            max_tokens: 1500,
+            per_input: 16_000,
+        };
+        // Two ~1000-byte bodies → 2 chunks of ~1003 estimated each.
+        // First batch fits one; second fits the second.
+        let mut all = Vec::new();
+        all.extend(chunks(&body));
+        all.extend(chunks(&body));
+        let batches = pack_batches(&all, &provider);
+        assert_eq!(batches.len(), 2);
     }
 
     #[test]
