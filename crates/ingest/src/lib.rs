@@ -17,15 +17,20 @@
 //! Concrete ingesters (Solodit, SWC, OZ advisories, protocol
 //! context) arrive in CP7.5–CP7.7.
 
+pub mod code4rena;
 pub mod error;
 pub mod ingester;
 pub mod normalize;
 pub mod openzeppelin;
 pub mod protocol;
+pub mod rekt;
+pub mod sherlock;
 pub mod solodit;
 pub mod state;
 pub mod swc;
+pub mod trailofbits;
 
+pub use code4rena::{Code4renaFindingRow, Code4renaIngester};
 pub use error::IngestError;
 pub use ingester::{
     IngestOptions, IngestProgress, IngestRecord, IngestReport, Ingester, IngesterKind,
@@ -33,6 +38,9 @@ pub use ingester::{
 pub use normalize::{chunk_record, NormalizedRecord};
 pub use openzeppelin::{OzAdvisoriesIngester, OzAdvisoryRow};
 pub use protocol::{ProtocolIngester, ProtocolSource};
+pub use rekt::{RektIngester, RektPostMortemRow};
+pub use sherlock::{SherlockFindingRow, SherlockIngester};
 pub use solodit::{SoloditFindingRow, SoloditIngester};
-pub use state::{default_state_path, IngestState, SourceState};
+pub use state::{default_knowledge_root, default_state_path, IngestState, SourceState};
 pub use swc::{SwcEntry, SwcIngester};
+pub use trailofbits::{TobBlogIngester, TobBlogRow};

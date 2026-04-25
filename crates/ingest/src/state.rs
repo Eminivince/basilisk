@@ -100,6 +100,17 @@ pub fn default_state_path() -> PathBuf {
         .join("ingest_state.json")
 }
 
+/// Default knowledge root: `<dirs::home_dir>/.basilisk/knowledge/`.
+///
+/// Returns `None` when no home directory is discoverable (rare, but
+/// handled so ingesters can fall back to an explicit `--dump-path`).
+/// Used by JSONL-based ingesters (rekt, trailofbits) to locate the
+/// operator-supplied corpus dump.
+#[must_use]
+pub fn default_knowledge_root() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".basilisk").join("knowledge"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

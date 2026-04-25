@@ -27,8 +27,9 @@ use basilisk_embeddings::{
 use basilisk_git::RepoCache;
 use basilisk_github::GithubClient;
 use basilisk_ingest::{
-    IngestOptions, IngestProgress, Ingester, OzAdvisoriesIngester, ProtocolIngester,
-    ProtocolSource, SoloditIngester, SwcIngester,
+    Code4renaIngester, IngestOptions, IngestProgress, Ingester, OzAdvisoriesIngester,
+    ProtocolIngester, ProtocolSource, RektIngester, SherlockIngester, SoloditIngester,
+    SwcIngester, TobBlogIngester,
 };
 use basilisk_knowledge::{Correction, FindingId, KnowledgeBase, SearchFilters, UserVerdict};
 use basilisk_vector::{FileVectorStore, VectorStore};
@@ -66,7 +67,8 @@ pub struct StatsArgs {
 
 #[derive(Debug, Args)]
 pub struct IngestArgs {
-    /// Corpus name: `solodit`, `swc`, `openzeppelin`.
+    /// Corpus name: `solodit`, `swc`, `openzeppelin`, `code4rena`,
+    /// `sherlock`, `rekt`, `trailofbits`.
     pub source: Option<String>,
     #[arg(long, conflicts_with = "source")]
     pub all: bool,
@@ -305,7 +307,7 @@ async fn run_ingest(args: &IngestArgs, config: &Config) -> Result<()> {
         let name = args
             .source
             .as_deref()
-            .context("specify a source or --all (sources: solodit, swc, openzeppelin, protocol)")?;
+            .context("specify a source or --all (sources: solodit, swc, openzeppelin, code4rena, sherlock, rekt, trailofbits)")?;
         if let Some(i) = ingester_by_name(name, config)? {
             vec![i]
         } else {
@@ -391,6 +393,7 @@ fn build_github_client(config: &Config) -> Option<GithubClient> {
 /// Return every ingester the CLI knows how to build, in a stable
 /// order so `--all` produces a reproducible sequence.
 fn available_ingesters(config: &Config) -> Vec<Box<dyn Ingester>> {
+    let _ = config; // RepoCache uses default location; config kept for symmetry with name-dispatch.
     let repo_cache = Arc::new(
         RepoCache::open()
             .unwrap_or_else(|_| panic!("can't open repo cache — check filesystem permissions")),
@@ -404,6 +407,10 @@ fn available_ingesters(config: &Config) -> Vec<Box<dyn Ingester>> {
         oz = oz.with_token(tok.clone());
     }
     out.push(Box::new(oz));
+    out.push(Box::new(Code4renaIngester::new()));
+    out.push(Box::new(SherlockIngester::new()));
+    out.push(Box::new(RektIngester::new()));
+    out.push(Box::new(TobBlogIngester::new()));
     out
 }
 
@@ -421,6 +428,10 @@ fn ingester_by_name(name: &str, config: &Config) -> Result<Option<Box<dyn Ingest
             }
             Ok(Some(Box::new(oz)))
         }
+        "code4rena" => Ok(Some(Box::new(Code4renaIngester::new()))),
+        "sherlock" => Ok(Some(Box::new(SherlockIngester::new()))),
+        "rekt" | "rekt.news" => Ok(Some(Box::new(RektIngester::new()))),
+        "trailofbits" | "tob" => Ok(Some(Box::new(TobBlogIngester::new()))),
         _ => Ok(None),
     }
 }
