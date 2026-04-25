@@ -292,6 +292,30 @@ impl Fork for AnvilFork {
         Ok(())
     }
 
+    async fn get_storage_at(&self, addr: Address, slot: B256) -> Result<B256, ExecError> {
+        let hex: String = rpc_call(
+            &self.inner,
+            "eth_getStorageAt",
+            json!([address_str(addr), b256_str(slot), "latest"]),
+        )
+        .await?;
+        parse_b256(&hex)
+    }
+
+    async fn get_balance(&self, addr: Address) -> Result<U256, ExecError> {
+        let hex: String = rpc_call(
+            &self.inner,
+            "eth_getBalance",
+            json!([address_str(addr), "latest"]),
+        )
+        .await?;
+        let s = hex.trim_start_matches("0x");
+        if s.is_empty() {
+            return Ok(U256::ZERO);
+        }
+        U256::from_str_radix(s, 16).map_err(|e| ExecError::Parse(format!("balance: {e}")))
+    }
+
     async fn snapshot(&self) -> Result<SnapshotId, ExecError> {
         let v: String = rpc_call(&self.inner, "evm_snapshot", json!([])).await?;
         Ok(SnapshotId(v))

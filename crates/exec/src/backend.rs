@@ -49,6 +49,15 @@ pub trait Fork: Send + Sync {
     async fn set_storage(&self, addr: Address, slot: B256, value: B256) -> Result<(), ExecError>;
     async fn warp_to(&self, timestamp: u64) -> Result<(), ExecError>;
 
+    /// Read one storage slot at `addr`. Maps to JSON-RPC's
+    /// `eth_getStorageAt` against the local fork — Set 9.5 / CP9.5.4
+    /// addition that un-stubs the `simulate_call_chain` watchlists.
+    async fn get_storage_at(&self, addr: Address, slot: B256) -> Result<B256, ExecError>;
+
+    /// Read the balance of `addr` against the fork's current state.
+    /// Maps to JSON-RPC's `eth_getBalance`.
+    async fn get_balance(&self, addr: Address) -> Result<U256, ExecError>;
+
     /// Snapshot the fork's current state. Pair with [`Self::revert`]
     /// to roll back exploratory mutations.
     async fn snapshot(&self) -> Result<SnapshotId, ExecError>;

@@ -123,8 +123,8 @@ pub async fn simulate_call_chain(
         }
     }
 
-    let final_storage = read_storage(fork.as_ref(), &input.watch_storage)?;
-    let final_balances = read_balances(fork.as_ref(), &input.watch_balances)?;
+    let final_storage = read_storage(fork.as_ref(), &input.watch_storage).await?;
+    let final_balances = read_balances(fork.as_ref(), &input.watch_balances).await?;
 
     let _ = fork.shutdown().await; // best-effort
 
@@ -203,34 +203,52 @@ async fn run_step(fork: &dyn Fork, step: &CallStep, index: usize) -> StepOutcome
     }
 }
 
-fn read_storage(
-    _fork: &dyn Fork,
+async fn read_storage(
+    fork: &dyn Fork,
     spec: &[(Address, B256)],
 ) -> Result<Vec<StorageReading>, AnalyzeError> {
-    // The Fork trait doesn't expose `eth_getStorageAt` / `eth_getBalance`
-    // yet — this returns zeros so the output shape is stable. When the
-    // trait grows storage / balance getters (Set 10), fill in here. For
-    // CP9.5 the agent gets the per-step outcomes (which is what
-    // simulate_call_chain is mostly for) and a placeholder watch
-    // surface that lets it specify what it wanted.
-    Ok(spec
-        .iter()
-        .map(|(addr, slot)| StorageReading {
+    // Set 9.5 / CP9.5.4: Fork now exposes get_storage_at, so the
+    // watchlist returns real values. Failures degrade to ZERO with a
+    // logged warning rather than aborting the whole simulation —
+    // the per-step outcomes are still useful even if one slot is
+    // unreadable.
+    let mut out = Vec::with_capacity(spec.len());
+    for (addr, slot) in spec {
+        let value = match fork.get_storage_at(*addr, *slot).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, %addr, %slot, "watch_storage read failed");
+                B256::ZERO
+            }
+        };
+        out.push(StorageReading {
             address: *addr,
             slot: *slot,
-            value: B256::ZERO,
-        })
-        .collect())
+            value,
+        });
+    }
+    Ok(out)
 }
 
-fn read_balances(_fork: &dyn Fork, addrs: &[Address]) -> Result<Vec<BalanceReading>, AnalyzeError> {
-    Ok(addrs
-        .iter()
-        .map(|addr| BalanceReading {
+async fn read_balances(
+    fork: &dyn Fork,
+    addrs: &[Address],
+) -> Result<Vec<BalanceReading>, AnalyzeError> {
+    let mut out = Vec::with_capacity(addrs.len());
+    for addr in addrs {
+        let balance = match fork.get_balance(*addr).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(error = %e, %addr, "watch_balances read failed");
+                U256::ZERO
+            }
+        };
+        out.push(BalanceReading {
             address: *addr,
-            balance: U256::ZERO,
-        })
-        .collect())
+            balance,
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

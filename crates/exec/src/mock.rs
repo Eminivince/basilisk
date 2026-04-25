@@ -192,6 +192,21 @@ impl Fork for MockFork {
         Ok(())
     }
 
+    async fn get_storage_at(&self, addr: Address, slot: B256) -> Result<B256, ExecError> {
+        let st = self.inner.state.lock().unwrap();
+        Ok(st
+            .storage
+            .get(&addr)
+            .and_then(|m| m.get(&slot))
+            .copied()
+            .unwrap_or(B256::ZERO))
+    }
+
+    async fn get_balance(&self, addr: Address) -> Result<U256, ExecError> {
+        let st = self.inner.state.lock().unwrap();
+        Ok(st.balances.get(&addr).copied().unwrap_or(U256::ZERO))
+    }
+
     async fn snapshot(&self) -> Result<SnapshotId, ExecError> {
         let id = self.inner.next_snapshot.fetch_add(1, Ordering::Relaxed);
         let key = format!("0x{id:x}");
@@ -291,6 +306,35 @@ mod tests {
         let f2 = block_on(backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)))
             .unwrap();
         assert_ne!(f1.id(), f2.id());
+    }
+
+    #[test]
+    fn get_storage_at_round_trips_with_set_storage() {
+        let backend = MockExecutionBackend::new();
+        let fork = block_on(backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)))
+            .unwrap();
+        let addr = Address::repeat_byte(0xab);
+        let slot = B256::repeat_byte(0x07);
+        let value = B256::repeat_byte(0xff);
+        // Slot defaults to ZERO before any set.
+        let pre = block_on(fork.get_storage_at(addr, slot)).unwrap();
+        assert_eq!(pre, B256::ZERO);
+        block_on(fork.set_storage(addr, slot, value)).unwrap();
+        let post = block_on(fork.get_storage_at(addr, slot)).unwrap();
+        assert_eq!(post, value);
+    }
+
+    #[test]
+    fn get_balance_round_trips_with_set_balance() {
+        let backend = MockExecutionBackend::new();
+        let fork = block_on(backend.fork_at(ForkSpec::new(ForkChain::Ethereum, ForkBlock::Latest)))
+            .unwrap();
+        let who = Address::repeat_byte(0xcd);
+        let pre = block_on(fork.get_balance(who)).unwrap();
+        assert_eq!(pre, U256::ZERO);
+        block_on(fork.set_balance(who, U256::from(7_777u64))).unwrap();
+        let post = block_on(fork.get_balance(who)).unwrap();
+        assert_eq!(post, U256::from(7_777u64));
     }
 
     #[test]
