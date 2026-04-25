@@ -272,6 +272,10 @@ impl RepoCache {
 
         match first {
             Ok(()) => Ok((temp, strategy)),
+            // RepoNotFound is terminal — no point retrying with a
+            // full clone; the repo simply doesn't exist (or auth
+            // didn't let us see it). Surface the error directly.
+            Err(e @ GitError::RepoNotFound { .. }) => Err(e),
             Err(e) if strategy == CloneStrategy::Shallow => {
                 tracing::warn!(
                     owner,

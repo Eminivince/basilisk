@@ -106,14 +106,13 @@ impl Code4renaFindingRow {
 /// this list is operator work guided by where retrieval-quality
 /// matters.
 pub const DEFAULT_CONTESTS: &[&str] = &[
-    "2023-04-ondo",
+    "2026-04-monetrix",
     "2023-05-ajna",
     "2023-08-shell",
     "2023-10-ethena",
     "2024-01-salty",
     "2024-02-spectra",
     "2024-04-renzo",
-    "2024-05-arcadia",
 ];
 
 /// Pulls public Code4rena contest findings into the
