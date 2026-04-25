@@ -91,6 +91,13 @@ pub struct ToolContext {
     /// [`Self::scratchpad`] so tools can mutate in-memory and the
     /// runner flushes to disk at turn boundaries.
     pub scratchpad_store: Option<Arc<ScratchpadStore>>,
+    /// Session-store handle. Populated by the runner so tools that
+    /// need durable per-session state (e.g. `record_limitation` /
+    /// `record_suspicion` / `finalize_self_critique` writing into
+    /// `session_feedback`) can do DB writes inline. `None` in
+    /// tests that don't need persistence; tools fall back to
+    /// operator-visible JSONL in that case.
+    pub session_store: Option<Arc<crate::session::SessionStore>>,
 }
 
 impl ToolContext {
@@ -112,6 +119,7 @@ impl ToolContext {
             session_id: SessionId::new("test-session"),
             scratchpad: None,
             scratchpad_store: None,
+            session_store: None,
         }
     }
 }

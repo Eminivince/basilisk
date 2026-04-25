@@ -98,10 +98,9 @@ impl Tool for RecordLimitation {
             Ok(r) => r,
             Err(e) => return ToolResult::err(format!("invalid input: {e}"), false),
         };
-        // Best-effort persistence: operator-visible JSONL plus a
-        // session-DB write (the DB write lands via ordering-rail
-        // infra in CP9.7 when SessionStore joins ToolContext).
-        append_feedback_jsonl("limitations.jsonl", ctx, &rec.to_wire(&ctx.session_id.0));
+        let wire = rec.to_wire(&ctx.session_id.0);
+        persist_feedback(ctx, "limitation", &wire);
+        append_feedback_jsonl("limitations.jsonl", ctx, &wire);
         ToolResult::ok(serde_json::json!({
             "recorded": true,
             "kind": "limitation",
@@ -142,7 +141,9 @@ impl Tool for RecordSuspicion {
             Ok(r) => r,
             Err(e) => return ToolResult::err(format!("invalid input: {e}"), false),
         };
-        append_feedback_jsonl("suspicions.jsonl", ctx, &rec.to_wire(&ctx.session_id.0));
+        let wire = rec.to_wire(&ctx.session_id.0);
+        persist_feedback(ctx, "suspicion", &wire);
+        append_feedback_jsonl("suspicions.jsonl", ctx, &wire);
         ToolResult::ok(serde_json::json!({
             "recorded": true,
             "kind": "suspicion",
@@ -192,7 +193,9 @@ impl Tool for FinalizeSelfCritique {
             Ok(r) => r,
             Err(e) => return ToolResult::err(format!("invalid input: {e}"), false),
         };
-        append_feedback_jsonl("self_critiques.jsonl", ctx, &rec.to_wire(&ctx.session_id.0));
+        let wire = rec.to_wire(&ctx.session_id.0);
+        persist_feedback(ctx, "self_critique", &wire);
+        append_feedback_jsonl("self_critiques.jsonl", ctx, &wire);
         ToolResult::ok(serde_json::json!({
             "recorded": true,
             "kind": "self_critique",
@@ -257,6 +260,22 @@ fn feedback_dir() -> Option<PathBuf> {
     }
     let home = dirs::home_dir()?;
     Some(home.join(".basilisk").join("feedback"))
+}
+
+/// Best-effort DB write via `SessionStore::record_feedback`. The
+/// JSONL append runs regardless so operators always have a visible
+/// trail; if the DB write fails we log and move on — the rail in
+/// the runner is the load-bearing check.
+fn persist_feedback(ctx: &ToolContext, kind: &str, wire: &serde_json::Value) {
+    let Some(store) = ctx.session_store.as_ref() else {
+        return;
+    };
+    let Ok(payload) = serde_json::to_string(wire) else {
+        return;
+    };
+    if let Err(e) = store.record_feedback(&ctx.session_id, kind, &payload) {
+        warn!(error = %e, "failed to record feedback to session DB");
+    }
 }
 
 fn append_feedback_jsonl(file_name: &str, _ctx: &ToolContext, wire: &serde_json::Value) {

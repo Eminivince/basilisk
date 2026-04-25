@@ -31,6 +31,15 @@ use crate::session::{SessionStatus, SessionStore, TurnRole};
 use crate::tool::{SessionId, ToolContext, ToolRegistry, ToolResult};
 use crate::tools::{Confidence, FinalReport, FINALIZE_REPORT_NAME};
 
+/// Text the agent sees when the ordering rail intercepts its
+/// `finalize_report` call without a prior `finalize_self_critique`.
+/// Phrased as a nudge, not a crash — the agent has one retry to do
+/// the right thing before the rail force-injects a stub critique.
+const RAIL_NUDGE: &str = "finalize_self_critique must be called before finalize_report. \
+     Please reflect on your audit (how solid are each finding's evidence, what methodology \
+     gaps did you notice, what would you do differently next time?) and call \
+     finalize_self_critique with those three fields before you try finalize_report again.";
+
 /// Hard-coded ceiling on the assistant's reply length per turn. Big
 /// enough for verbose tool-use turns + reasoning; small enough that a
 /// runaway token storm is bounded. Configurable via Budget once we
@@ -244,6 +253,7 @@ impl AgentRunner {
             session_id,
             scratchpad,
             scratchpad_store: self.scratchpad_store.clone(),
+            session_store: Some(Arc::clone(&self.store)),
         }
     }
 
@@ -484,6 +494,11 @@ impl AgentRunner {
         // Budget caps are the ultimate bound on runaway sessions.
         let mut consecutive_text_ends: u32 = 0;
         let mut force_tool_choice: Option<ToolChoice> = None;
+        // Count of finalize_report attempts blocked by the CP9.7
+        // ordering rail this run. 0 → first finalize_report attempt
+        // without a critique nudges; 1 → second attempt force-injects
+        // a synthetic critique so we don't lock up.
+        let mut rail_block_count: u32 = 0;
         let stop_reason: AgentStopReason = loop {
             if let Some(reason) = self.budget_check_at(&stats, started_inst) {
                 debug!(?reason, "budget tripped");
@@ -557,9 +572,92 @@ impl AgentRunner {
                 let ContentBlock::ToolUse { id, name, input } = block else {
                     continue;
                 };
+
+                // Ordering rail (Set 9 / CP9.7): `finalize_report` is
+                // only accepted after at least one `finalize_self_critique`
+                // row exists in `session_feedback`. First blocked attempt
+                // returns a nudge; the second force-injects a stub
+                // critique so the run can terminate even if the agent
+                // gets stuck. Counter resets whenever a legitimate
+                // critique lands, so re-investigation followed by a
+                // proper reflection always works.
+                //
+                // The rail only engages when `finalize_self_critique`
+                // is actually a registered tool — recon-only registries
+                // (which don't ship the critique tool) are unaffected.
+                let critique_registered = self
+                    .registry
+                    .get(crate::tools::FINALIZE_SELF_CRITIQUE_NAME)
+                    .is_some();
+                if name == FINALIZE_REPORT_NAME
+                    && critique_registered
+                    && self.store.count_feedback(&session_id, "self_critique")
+                        .unwrap_or(0)
+                        == 0
+                {
+                    if rail_block_count == 0 {
+                        warn!(
+                            session = %session_id,
+                            "rail: finalize_report before finalize_self_critique — nudging agent"
+                        );
+                        rail_block_count = 1;
+                        let nudge = ToolResult::err(RAIL_NUDGE, true);
+                        let (output_val, is_err) = result_to_record(&nudge);
+                        self.store.record_tool_call(
+                            &session_id,
+                            turn_index,
+                            call_index,
+                            id.clone(),
+                            name.clone(),
+                            input,
+                            output_val.as_ref(),
+                            is_err,
+                            0,
+                        )?;
+                        observer.on_tool_result(turn_index_for_observer, name, false, 0);
+                        stats.tool_calls = stats.tool_calls.saturating_add(1);
+                        call_index = call_index.saturating_add(1);
+                        let (output_str, err_flag) = nudge.to_content_pair();
+                        tool_results.push(ContentBlock::ToolResult {
+                            tool_use_id: id.clone(),
+                            content: output_str,
+                            is_error: err_flag,
+                        });
+                        continue;
+                    }
+                    warn!(
+                        session = %session_id,
+                        "rail: second finalize_report attempt — force-injecting empty \
+                         self_critique to avoid lockup"
+                    );
+                    let synthetic = serde_json::json!({
+                        "session_id": session_id.0,
+                        "recorded_at_ms": 0,
+                        "kind": "self_critique",
+                        "findings_quality_assessment": "(force-injected by ordering rail — \
+                            agent attempted finalize_report twice without calling \
+                            finalize_self_critique)",
+                        "methodology_gaps": "(force-injected by ordering rail)",
+                        "what_to_improve": "(force-injected by ordering rail)"
+                    });
+                    if let Ok(payload) = serde_json::to_string(&synthetic) {
+                        let _ = self
+                            .store
+                            .record_feedback(&session_id, "self_critique", &payload);
+                    }
+                }
+
                 let dispatch_started = Instant::now();
                 let result = self.registry.dispatch(name, input.clone(), &context).await;
                 let duration_ms = duration_to_ms(dispatch_started.elapsed());
+
+                // Reset rail counter on any successful self_critique —
+                // a properly-done reflection clears the escalation
+                // trail so a later finalize_report isn't stuck on the
+                // forced path.
+                if name == crate::tools::FINALIZE_SELF_CRITIQUE_NAME && result.is_ok() {
+                    rail_block_count = 0;
+                }
                 let (output_value, is_err) = result_to_record(&result);
                 self.store.record_tool_call(
                     &session_id,

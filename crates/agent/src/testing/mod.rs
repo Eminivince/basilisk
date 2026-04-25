@@ -364,6 +364,42 @@ pub fn echo_registry() -> ToolRegistry {
     r
 }
 
+/// Registry shaped like [`echo_registry`] plus the three self-critique
+/// tools. Used by the ordering-rail tests in `tests/agent_loop.rs`.
+#[must_use]
+pub fn echo_registry_with_self_critique() -> ToolRegistry {
+    let mut r = echo_registry();
+    r.register(Arc::new(crate::tools::RecordLimitation));
+    r.register(Arc::new(crate::tools::RecordSuspicion));
+    r.register(Arc::new(crate::tools::FinalizeSelfCritique));
+    r
+}
+
+/// Variant of [`build_test_runner`] that uses
+/// [`echo_registry_with_self_critique`] so the ordering rail is
+/// active — the sense you want for testing the rail itself.
+#[must_use]
+pub fn build_test_runner_with_self_critique(
+    backend: Arc<dyn LlmBackend>,
+    repo_cache_root: PathBuf,
+    budget: Budget,
+) -> AgentRunner {
+    let store = Arc::new(SessionStore::open_in_memory().expect("in-memory store opens"));
+    let config = Arc::new(Config::default());
+    let github = Arc::new(GithubClient::new(None).expect("tokenless github client"));
+    let repo_cache = Arc::new(RepoCache::open_at(repo_cache_root).expect("repo cache opens"));
+    AgentRunner::new(
+        backend,
+        echo_registry_with_self_critique(),
+        store,
+        config,
+        github,
+        repo_cache,
+        "you are a helpful test auditor",
+        budget,
+    )
+}
+
 /// Assemble an [`AgentRunner`] backed by `backend` + an in-memory
 /// session store + the [`echo_registry`].
 ///

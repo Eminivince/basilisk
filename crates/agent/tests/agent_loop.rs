@@ -828,3 +828,135 @@ async fn observer_does_not_receive_tool_events_on_llm_error() {
         .unwrap()
         .starts_with("session_complete/llm_error"));
 }
+
+// --- Set 9 / CP9.7: ordering rail ---------------------------------------
+
+/// The rail blocks the first `finalize_report` when no
+/// `finalize_self_critique` has run, surfaces a retryable nudge
+/// error, and lets the agent re-enter with a proper critique.
+#[tokio::test]
+async fn ordering_rail_blocks_finalize_then_allows_after_self_critique() {
+    use basilisk_agent::testing::build_test_runner_with_self_critique;
+    use basilisk_agent::tools::FINALIZE_SELF_CRITIQUE_NAME;
+
+    let backend = Arc::new(MockLlmBackend::new("claude-opus-4-7"));
+
+    // Turn 1: agent tries finalize_report without a critique.
+    backend.push(
+        MockResponse::new()
+            .finalize(
+                "tu_f1",
+                "# premature\nI'm done.",
+                Confidence::Medium,
+                None,
+            )
+            .usage(60, 30)
+            .build(),
+    );
+    // Turn 2: agent reflects, then finalizes. Both tool calls in
+    // one assistant turn — the rail passes because the critique
+    // lands before finalize in the dispatch order.
+    backend.push(
+        MockResponse::new()
+            .tool_use(
+                "tu_crit",
+                FINALIZE_SELF_CRITIQUE_NAME,
+                serde_json::json!({
+                    "findings_quality_assessment": "thin — only one scan",
+                    "methodology_gaps": "didn't probe callers thoroughly",
+                    "what_to_improve": "use find_callers_of earlier",
+                }),
+            )
+            .finalize(
+                "tu_f2",
+                "# now properly\nhere is the report after reflection.",
+                Confidence::Medium,
+                None,
+            )
+            .usage(150, 80)
+            .build(),
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let runner =
+        build_test_runner_with_self_critique(backend, dir.path().to_path_buf(), Budget::default());
+    let outcome = runner
+        .run("eth/0xdead", "audit this", None)
+        .await
+        .expect("run ok");
+
+    assert_eq!(outcome.stop_reason, AgentStopReason::ReportFinalized);
+    assert_eq!(outcome.stats.turns, 2);
+    let report = outcome.final_report.expect("final report");
+    assert!(report.markdown.contains("after reflection"));
+
+    // Inspect the persisted transcript: there should be a
+    // rail-nudge tool_call row for turn 1's finalize_report (with
+    // is_error=true), then the critique + the real finalize on turn 2.
+    let snap = runner.store().load_session(&outcome.session_id).unwrap();
+    let finalize_rows: Vec<_> = snap
+        .tool_calls
+        .iter()
+        .filter(|r| r.tool_name == FINALIZE_REPORT_NAME)
+        .collect();
+    assert_eq!(finalize_rows.len(), 2, "two finalize attempts recorded");
+    assert!(finalize_rows[0].is_error, "first finalize was blocked");
+    assert!(!finalize_rows[1].is_error, "second finalize succeeded");
+}
+
+/// Second-attempt escape hatch: if the agent insists on finalizing
+/// without reflecting (pathological case), the rail force-injects
+/// a stub critique so the run can terminate rather than spinning.
+#[tokio::test]
+async fn ordering_rail_force_injects_on_second_attempt() {
+    use basilisk_agent::testing::build_test_runner_with_self_critique;
+
+    let backend = Arc::new(MockLlmBackend::new("claude-opus-4-7"));
+
+    // Turn 1: finalize without critique — nudged.
+    backend.push(
+        MockResponse::new()
+            .finalize("tu_f1", "# go", Confidence::Medium, None)
+            .usage(40, 10)
+            .build(),
+    );
+    // Turn 2: stubbornly finalizes again without critique — rail
+    // force-injects a synthetic critique and lets it through.
+    backend.push(
+        MockResponse::new()
+            .finalize(
+                "tu_f2",
+                "# still going",
+                Confidence::Medium,
+                None,
+            )
+            .usage(40, 10)
+            .build(),
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let runner =
+        build_test_runner_with_self_critique(backend, dir.path().to_path_buf(), Budget::default());
+    let outcome = runner
+        .run("eth/0xdead", "audit", None)
+        .await
+        .expect("run ok");
+
+    assert_eq!(outcome.stop_reason, AgentStopReason::ReportFinalized);
+    let snap = runner.store().load_session(&outcome.session_id).unwrap();
+    // The force-injected critique lives in session_feedback as a row.
+    let n = runner
+        .store()
+        .count_feedback(&outcome.session_id, "self_critique")
+        .unwrap();
+    assert_eq!(n, 1, "rail injected one synthetic critique");
+    // Two finalize attempts; first blocked, second allowed.
+    let finalize_rows: Vec<_> = snap
+        .tool_calls
+        .iter()
+        .filter(|r| r.tool_name == FINALIZE_REPORT_NAME)
+        .collect();
+    assert_eq!(finalize_rows.len(), 2);
+    assert!(finalize_rows[0].is_error);
+    assert!(!finalize_rows[1].is_error);
+}
