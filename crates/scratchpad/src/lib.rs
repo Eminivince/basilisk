@@ -76,10 +76,7 @@ pub fn validate_custom_name(name: &str) -> Result<(), ScratchpadError> {
             reason: format!("too long ({} chars; max 64)", name.len()),
         });
     }
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err(ScratchpadError::InvalidCustomName {
             name: name.into(),
             reason: "only ASCII alphanumeric + underscore allowed".into(),

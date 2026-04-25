@@ -328,6 +328,14 @@ fn build_runner(flags: &AgentFlags, config: &Config) -> Result<(AgentRunner, Pat
     );
     let repo_cache = Arc::new(RepoCache::open().context("opening repo cache")?);
 
+    // Open the scratchpad store against the same SQLite file so
+    // `audit session scratchpad show <id>` resolves by default
+    // without `--db`. The SessionStore migration already created
+    // the scratchpad tables, so this open is just a handle.
+    let scratchpad_store = Arc::new(
+        basilisk_scratchpad::ScratchpadStore::open(&db_path).context("opening scratchpad store")?,
+    );
+
     let runner = AgentRunner::new(
         backend,
         standard_registry(),
@@ -337,7 +345,8 @@ fn build_runner(flags: &AgentFlags, config: &Config) -> Result<(AgentRunner, Pat
         repo_cache,
         system_prompt,
         build_budget(flags),
-    );
+    )
+    .with_scratchpad(scratchpad_store);
     Ok((runner, db_path))
 }
 

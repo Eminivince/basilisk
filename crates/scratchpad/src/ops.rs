@@ -376,16 +376,39 @@ mod tests {
     fn update_item_missing_item_errors() {
         let mut sp = Scratchpad::new("s");
         let err = sp
-            .update_item(
-                &SectionKey::Hypotheses,
-                ItemId(999),
-                ItemUpdate::default(),
-            )
+            .update_item(&SectionKey::Hypotheses, ItemId(999), ItemUpdate::default())
             .unwrap_err();
         assert!(matches!(err, ScratchpadError::ItemNotFound { .. }));
     }
 
     // --- bounded compact render -----------------------------------
+
+    #[test]
+    fn compact_render_bytes_report() {
+        let mut sp = Scratchpad::new("bench");
+        for i in 0..500 {
+            sp.append_item(
+                &SectionKey::Hypotheses,
+                format!(
+                    "Hypothesis #{i}: a plausible theory across multiple contracts with \
+                     some reasoning that would expand the token budget. ({i})"
+                ),
+                vec![format!("tag-{i}")],
+            )
+            .unwrap();
+        }
+        let out = crate::render_compact(&sp);
+        // Print so `cargo test -- --nocapture` shows the measured
+        // bytes / approximate-token count. The assertion below is
+        // the load-bearing part — this is just visibility.
+        println!(
+            "compact-render-500-items: {} bytes ≈ {} tokens (budget ceiling: {})",
+            out.len(),
+            out.len() / 4,
+            crate::COMPACT_TOKEN_BUDGET,
+        );
+        assert!(out.len() < 16_000);
+    }
 
     #[test]
     fn compact_render_stays_under_budget_with_500_items() {
@@ -423,7 +446,8 @@ mod tests {
             "Chainlink → UniV3 TWAP",
         )
         .unwrap();
-        sp.append_item(&SectionKey::Hypotheses, "h1", vec![]).unwrap();
+        sp.append_item(&SectionKey::Hypotheses, "h1", vec![])
+            .unwrap();
         let out = crate::render_compact(&sp);
         assert!(out.contains("Hypotheses"));
         assert!(out.contains("Custom: oracle_tree"));

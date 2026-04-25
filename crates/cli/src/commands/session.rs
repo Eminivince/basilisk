@@ -21,9 +21,7 @@ use basilisk_agent::{
     ToolCallRecord, TurnRecord, TurnRole,
 };
 use basilisk_core::Config;
-use basilisk_scratchpad::{
-    render_compact, render_markdown, ScratchpadStore, Section, SectionKey,
-};
+use basilisk_scratchpad::{render_compact, render_markdown, ScratchpadStore, Section, SectionKey};
 use clap::{Args, Subcommand, ValueEnum};
 
 use crate::commands::agent_runner::{self, AgentFlags};
@@ -592,4 +590,3 @@ mod tests {
         assert!(!out.contains('\n'));
     }
 }
-

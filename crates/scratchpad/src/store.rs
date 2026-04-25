@@ -93,9 +93,7 @@ impl ScratchpadStore {
         // Without the `sessions` table, our FK on scratchpads would
         // reject inserts. Create a minimal stub so in-memory tests
         // can exercise the real INSERT path.
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY);",
-        )?;
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY);")?;
         apply_schema(&conn)?;
         Ok(Self {
             inner: Arc::new(Inner {
@@ -342,10 +340,7 @@ impl ScratchpadStore {
     /// # Errors
     ///
     /// Returns [`ScratchpadError::Sqlite`] on query failure.
-    pub fn list_revisions(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<(i64, u64)>, ScratchpadError> {
+    pub fn list_revisions(&self, session_id: &str) -> Result<Vec<(i64, u64)>, ScratchpadError> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(
             "SELECT revision_index, at_ms FROM scratchpad_revisions
@@ -394,7 +389,11 @@ mod tests {
         // Directly mutate an items section — full ops API lands in
         // CP8.3; this is a raw storage-layer check.
         let items = sp.sections.get_mut(&SectionKey::Hypotheses).unwrap();
-        if let Section::Items(ItemsSection { items, last_updated_ms }) = items {
+        if let Section::Items(ItemsSection {
+            items,
+            last_updated_ms,
+        }) = items
+        {
             items.push(Item {
                 id: crate::types::ItemId(1),
                 content: "possible reentrancy on withdraw".into(),

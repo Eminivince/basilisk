@@ -107,10 +107,7 @@ impl AgentRunner {
     ///
     /// [`Scratchpad`]: basilisk_scratchpad::Scratchpad
     #[must_use]
-    pub fn with_scratchpad(
-        mut self,
-        store: Arc<basilisk_scratchpad::ScratchpadStore>,
-    ) -> Self {
+    pub fn with_scratchpad(mut self, store: Arc<basilisk_scratchpad::ScratchpadStore>) -> Self {
         self.scratchpad_store = Some(store);
         self
     }

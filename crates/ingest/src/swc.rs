@@ -300,9 +300,7 @@ impl Ingester for SwcIngester {
 /// Pinning the ref means we don't need a `GithubClient` for
 /// default-branch lookup — so a bad `GITHUB_TOKEN` can't break
 /// this path.
-async fn fetch_swc_registry(
-    cache: &RepoCache,
-) -> Result<basilisk_git::FetchedRepo, IngestError> {
+async fn fetch_swc_registry(cache: &RepoCache) -> Result<basilisk_git::FetchedRepo, IngestError> {
     let shallow = FetchOptions {
         strategy: CloneStrategy::Shallow,
         force_refresh: false,

@@ -327,7 +327,10 @@ impl Scratchpad {
     }
 
     #[allow(dead_code)] // used once CP8.3 lands the ops API
-    pub(crate) fn section_mut(&mut self, key: &SectionKey) -> Result<&mut Section, ScratchpadError> {
+    pub(crate) fn section_mut(
+        &mut self,
+        key: &SectionKey,
+    ) -> Result<&mut Section, ScratchpadError> {
         self.sections
             .get_mut(key)
             .ok_or_else(|| ScratchpadError::MissingSection(key.wire_name()))

@@ -261,10 +261,7 @@ impl EmbeddingProvider for BatchingProvider {
 /// `token_cap`. Any single input that alone exceeds `token_cap`
 /// still forms its own 1-element batch — the gate's oversize path
 /// handles that.
-fn split_by_tokens(
-    batch: &[EmbeddingInput],
-    token_cap: Option<u32>,
-) -> Vec<&[EmbeddingInput]> {
+fn split_by_tokens(batch: &[EmbeddingInput], token_cap: Option<u32>) -> Vec<&[EmbeddingInput]> {
     let Some(cap) = token_cap else {
         return vec![batch];
     };

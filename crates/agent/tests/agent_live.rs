@@ -166,8 +166,11 @@ fn build_live_runner(
         }
     };
 
-    let store =
-        Arc::new(SessionStore::open(db_dir.path().join("sessions.db")).expect("open session db"));
+    let db_path = db_dir.path().join("sessions.db");
+    let store = Arc::new(SessionStore::open(&db_path).expect("open session db"));
+    let scratchpad_store = Arc::new(
+        basilisk_scratchpad::ScratchpadStore::open(&db_path).expect("open scratchpad store"),
+    );
     let github =
         Arc::new(GithubClient::new(config.github_token.as_deref()).expect("github client"));
     let repo_cache =
@@ -183,6 +186,7 @@ fn build_live_runner(
         RECON_DEFAULT_PROMPT,
         budget,
     )
+    .with_scratchpad(scratchpad_store)
 }
 
 fn initial_message(target: &str) -> String {
@@ -388,4 +392,114 @@ async fn agent_live_aave_v3_pool_mainnet() {
         md.contains("proxy") || md.contains("implementation"),
         "expected proxy/implementation vocabulary in Aave report",
     );
+}
+
+/// Set 8 / CP8.8 live test.
+///
+/// End-to-end exercise of working memory against the smallest
+/// target. Asserts the scratchpad was actually populated — not just
+/// that the tools exist. Prints the full markdown render so the
+/// set-8 report can include what the agent wrote.
+///
+/// Budget stays the same as the forge-template test (under $1). The
+/// assertion shape is deliberately loose: we don't know exactly how
+/// the model will organize its thinking, only that at least one of
+/// the seven tracking sections should have content by the end of a
+/// recon.
+#[ignore = "live: hits real LLM API + GitHub; costs money"]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn scratchpad_live_forge_template_writes_working_memory() {
+    let Some(config) = load_config_or_skip() else {
+        return;
+    };
+
+    let db_dir = tempfile::tempdir().unwrap();
+    let cache_dir = tempfile::tempdir().unwrap();
+    let db_path = db_dir.path().join("sessions.db");
+
+    let runner = build_live_runner(
+        &config,
+        &db_dir,
+        &cache_dir,
+        Budget {
+            max_turns: 20,
+            max_tokens_total: 200_000,
+            max_cost_cents: 100,
+            max_duration: Duration::from_secs(600),
+        },
+    );
+
+    let target = "https://github.com/foundry-rs/forge-template";
+    let outcome = runner
+        .run_with_observer(
+            target,
+            scratchpad_initial_message(target),
+            None,
+            &NoopObserver,
+        )
+        .await
+        .expect("agent run ok");
+
+    report_outcome("forge-template + scratchpad", &outcome);
+
+    assert!(
+        matches!(outcome.stop_reason, AgentStopReason::ReportFinalized),
+        "expected report_finalized, got {:?}",
+        outcome.stop_reason,
+    );
+    assert!(outcome.stats.tool_calls >= 2);
+
+    // Inspect the scratchpad the agent left behind.
+    let pads =
+        basilisk_scratchpad::ScratchpadStore::open(&db_path).expect("reopen scratchpad store");
+    let sp = pads
+        .load(outcome.session_id.as_str())
+        .expect("load scratchpad")
+        .expect("scratchpad present after live run");
+
+    eprintln!("\n=== scratchpad after live run ===");
+    eprintln!("{}", basilisk_scratchpad::render_markdown(&sp));
+    eprintln!("=== end scratchpad ===\n");
+
+    // The prompt explicitly encourages scratchpad use — assert at
+    // least one section beyond the default prose block has content.
+    let any_section_populated = sp.sections.iter().any(|(key, section)| {
+        let has_content = match section {
+            basilisk_scratchpad::Section::Prose(p) => !p.markdown.trim().is_empty(),
+            basilisk_scratchpad::Section::Items(i) => !i.items.is_empty(),
+        };
+        if has_content {
+            eprintln!("  populated: {}", key.wire_name());
+        }
+        has_content
+    });
+    assert!(
+        any_section_populated,
+        "expected agent to write at least one scratchpad section; none were populated",
+    );
+
+    // Scratchpad should have saved at least once (create + at
+    // minimum one write → ≥ 2 revisions).
+    let revs = pads
+        .list_revisions(outcome.session_id.as_str())
+        .expect("list revisions");
+    assert!(
+        revs.len() >= 2,
+        "expected ≥2 revisions (create + at least one write), got {}",
+        revs.len(),
+    );
+}
+
+fn scratchpad_initial_message(target: &str) -> String {
+    format!(
+        "Target: {target}\n\n\
+         Please perform reconnaissance on this target. You have a scratchpad available — \
+         use it. As you learn about the project, write a paragraph into `system_understanding` \
+         describing how it's organised. When something about the project prompts a question \
+         you can't immediately answer, append to `open_questions`. If you notice anything \
+         surprising or suspicious (even if unprovable during recon), append to \
+         `suspicions_not_yet_confirmed`. If a tool can't tell you something you wanted to \
+         know, append to `limitations_noticed`. Call `finalize_report` when you have enough \
+         to write a useful recon brief — referring back to your scratchpad as you synthesise."
+    )
 }

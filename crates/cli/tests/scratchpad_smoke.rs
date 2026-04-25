@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use assert_cmd::Command;
 use basilisk_agent::SessionStore;
-use basilisk_scratchpad::{SectionKey, ScratchpadStore};
+use basilisk_scratchpad::{ScratchpadStore, SectionKey};
 use predicates::str::contains;
 use tempfile::TempDir;
 
@@ -44,8 +44,12 @@ fn seed(db: &Path) -> String {
         vec!["draft".into()],
     )
     .unwrap();
-    sp.append_item(&SectionKey::OpenQuestions, "what oracles are in use?", vec![])
-        .unwrap();
+    sp.append_item(
+        &SectionKey::OpenQuestions,
+        "what oracles are in use?",
+        vec![],
+    )
+    .unwrap();
     pads.save(&sp).unwrap();
     id_str
 }
@@ -130,13 +134,7 @@ fn export_markdown_writes_file() {
     let id = seed(&db);
     let out = tmp.path().join("scratchpad.md");
     audit_with_home(tmp.path())
-        .args([
-            "session",
-            "scratchpad",
-            "export",
-            &id,
-            "--output",
-        ])
+        .args(["session", "scratchpad", "export", &id, "--output"])
         .arg(&out)
         .args(["--format", "markdown", "--db"])
         .arg(&db)
@@ -200,13 +198,7 @@ fn show_unknown_session_fails_cleanly() {
     // Open so the schema is created, but don't seed.
     SessionStore::open(&db).unwrap();
     audit_with_home(tmp.path())
-        .args([
-            "session",
-            "scratchpad",
-            "show",
-            "not-a-real-id",
-            "--db",
-        ])
+        .args(["session", "scratchpad", "show", "not-a-real-id", "--db"])
         .arg(&db)
         .assert()
         .failure()
@@ -228,13 +220,7 @@ fn show_at_revision_returns_historical_state() {
     let latest = revs[0].0;
 
     audit_with_home(tmp.path())
-        .args([
-            "session",
-            "scratchpad",
-            "show",
-            &id,
-            "--at-revision",
-        ])
+        .args(["session", "scratchpad", "show", &id, "--at-revision"])
         .arg(latest.to_string())
         .args(["--db"])
         .arg(&db)

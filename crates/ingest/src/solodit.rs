@@ -613,7 +613,10 @@ mod tests {
             severity_from_bracket_tag("[C-01] Crit"),
             Some("critical".into())
         );
-        assert_eq!(severity_from_bracket_tag("[H-01] High"), Some("high".into()));
+        assert_eq!(
+            severity_from_bracket_tag("[H-01] High"),
+            Some("high".into())
+        );
         assert_eq!(
             severity_from_bracket_tag("[M-02] Med"),
             Some("medium".into())

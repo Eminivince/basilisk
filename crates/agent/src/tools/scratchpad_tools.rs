@@ -49,10 +49,7 @@ fn parse_section_key(name: &str) -> Result<SectionKey, ToolResult> {
 }
 
 fn err_from_scratchpad(e: ScratchpadError) -> ToolResult {
-    let retryable = matches!(
-        e,
-        ScratchpadError::Storage(_) | ScratchpadError::Sqlite(_),
-    );
+    let retryable = matches!(e, ScratchpadError::Storage(_) | ScratchpadError::Sqlite(_),);
     ToolResult::err(e.to_string(), retryable)
 }
 
@@ -137,10 +134,7 @@ impl Tool for ScratchpadRead {
                 let mut out = String::new();
                 for item in arr {
                     let Some(name) = item.as_str() else {
-                        return ToolResult::err(
-                            "'section' array items must be strings",
-                            false,
-                        );
+                        return ToolResult::err("'section' array items must be strings", false);
                     };
                     let key = match parse_section_key(name) {
                         Ok(k) => k,
@@ -172,7 +166,10 @@ fn render_all(sp: &Scratchpad, full: bool) -> String {
 
 fn render_one(sp: &Scratchpad, key: &SectionKey, full: bool) -> Result<String, ToolResult> {
     let section = sp.sections.get(key).ok_or_else(|| {
-        ToolResult::err(format!("section '{}' doesn't exist", key.wire_name()), false)
+        ToolResult::err(
+            format!("section '{}' doesn't exist", key.wire_name()),
+            false,
+        )
     })?;
     // Build a mini-scratchpad containing only this section so the
     // existing renderers apply uniformly.
@@ -361,7 +358,8 @@ impl Tool for ScratchpadWrite {
 fn apply_op(sp: &mut Scratchpad, op: WriteOp) -> Result<serde_json::Value, ScratchpadError> {
     match op {
         WriteOp::SetProse { section, markdown } => {
-            let key = SectionKey::parse(&section).ok_or(ScratchpadError::MissingSection(section))?;
+            let key =
+                SectionKey::parse(&section).ok_or(ScratchpadError::MissingSection(section))?;
             sp.set_prose(&key, markdown)?;
             Ok(serde_json::json!({ "ok": true }))
         }
@@ -370,7 +368,8 @@ fn apply_op(sp: &mut Scratchpad, op: WriteOp) -> Result<serde_json::Value, Scrat
             content,
             tags,
         } => {
-            let key = SectionKey::parse(&section).ok_or(ScratchpadError::MissingSection(section))?;
+            let key =
+                SectionKey::parse(&section).ok_or(ScratchpadError::MissingSection(section))?;
             let id = sp.append_item(&key, content, tags)?;
             Ok(serde_json::json!({ "ok": true, "item_id": id.0 }))
         }
@@ -381,7 +380,8 @@ fn apply_op(sp: &mut Scratchpad, op: WriteOp) -> Result<serde_json::Value, Scrat
             status,
             tags,
         } => {
-            let key = SectionKey::parse(&section).ok_or(ScratchpadError::MissingSection(section))?;
+            let key =
+                SectionKey::parse(&section).ok_or(ScratchpadError::MissingSection(section))?;
             sp.update_item(
                 &key,
                 ItemId(item_id),
@@ -394,7 +394,8 @@ fn apply_op(sp: &mut Scratchpad, op: WriteOp) -> Result<serde_json::Value, Scrat
             Ok(serde_json::json!({ "ok": true }))
         }
         WriteOp::RemoveItem { section, item_id } => {
-            let key = SectionKey::parse(&section).ok_or(ScratchpadError::MissingSection(section))?;
+            let key =
+                SectionKey::parse(&section).ok_or(ScratchpadError::MissingSection(section))?;
             sp.remove_item(&key, ItemId(item_id))?;
             Ok(serde_json::json!({ "ok": true }))
         }
@@ -525,10 +526,10 @@ impl Tool for ScratchpadHistory {
                 for (rev_idx, at_ms) in wanted {
                     match store.load_at_revision(session_id, *rev_idx) {
                         Ok(Some(sections)) => {
-                            let section_state = sections.get(&key).map_or(
-                                serde_json::Value::Null,
-                                |s| serde_json::to_value(s).unwrap_or(serde_json::Value::Null),
-                            );
+                            let section_state =
+                                sections.get(&key).map_or(serde_json::Value::Null, |s| {
+                                    serde_json::to_value(s).unwrap_or(serde_json::Value::Null)
+                                });
                             entries.push(serde_json::json!({
                                 "revision_index": rev_idx,
                                 "at_ms": at_ms,
@@ -555,11 +556,7 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    fn ctx_with_scratchpad() -> (
-        ToolContext,
-        Arc<Mutex<Scratchpad>>,
-        Arc<ScratchpadStore>,
-    ) {
+    fn ctx_with_scratchpad() -> (ToolContext, Arc<Mutex<Scratchpad>>, Arc<ScratchpadStore>) {
         let dir = tempfile::tempdir().unwrap();
         let mut ctx = ToolContext::test(dir.path().to_path_buf());
         std::mem::forget(dir);
@@ -612,9 +609,7 @@ mod tests {
     #[tokio::test]
     async fn read_returns_all_sections_on_default() {
         let (ctx, _lock, _store) = ctx_with_scratchpad();
-        let res = ScratchpadRead
-            .execute(serde_json::json!({}), &ctx)
-            .await;
+        let res = ScratchpadRead.execute(serde_json::json!({}), &ctx).await;
         match res {
             ToolResult::Ok(v) => {
                 let md = v.get("markdown").and_then(|s| s.as_str()).unwrap_or("");
@@ -769,10 +764,7 @@ mod tests {
                 );
                 let hist = v.get("history").and_then(|h| h.as_array()).unwrap();
                 assert_eq!(hist.len(), 1);
-                assert_eq!(
-                    hist[0].get("content"),
-                    Some(&serde_json::json!("v1")),
-                );
+                assert_eq!(hist[0].get("content"), Some(&serde_json::json!("v1")),);
             }
             ToolResult::Err { message, .. } => panic!("{message}"),
         }
