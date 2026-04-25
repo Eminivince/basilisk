@@ -18,6 +18,7 @@
 pub mod anvil;
 pub mod backend;
 pub mod error;
+pub mod forge;
 pub mod mock;
 pub mod rpc_url;
 pub mod types;
@@ -25,6 +26,7 @@ pub mod types;
 pub use anvil::{AnvilFork, AnvilForkBackend};
 pub use backend::{ExecutionBackend, Fork};
 pub use error::ExecError;
+pub use forge::{forge_binary, run_forge_test, scaffold_minimal_project};
 pub use mock::{MockExecutionBackend, MockFork};
 pub use rpc_url::resolve_rpc_url;
 pub use types::{

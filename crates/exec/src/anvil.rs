@@ -371,12 +371,17 @@ impl Fork for AnvilFork {
 
     async fn run_foundry_test(
         &self,
-        _project: ForgeProject,
+        project: ForgeProject,
     ) -> Result<ForgeTestResult, ExecError> {
-        // Lands in CP9.2.
-        Err(ExecError::Unsupported(
-            "run_foundry_test ships in CP9.2",
-        ))
+        // Point forge at this fork's RPC so it inherits any
+        // impersonations / storage overrides we've set up. Falls
+        // back to project.fork_url when this fork has no URL (mock).
+        let override_url = if self.inner.url.is_empty() {
+            None
+        } else {
+            Some(self.inner.url.as_str())
+        };
+        crate::forge::run_forge_test(&project, override_url).await
     }
 
     async fn shutdown(&self) -> Result<(), ExecError> {
