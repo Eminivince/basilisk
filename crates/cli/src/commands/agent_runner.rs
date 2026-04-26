@@ -426,19 +426,21 @@ fn build_runner(flags: &AgentFlags, config: &Config) -> Result<(AgentRunner, Pat
         basilisk_scratchpad::ScratchpadStore::open(&db_path).context("opening scratchpad store")?,
     );
 
-    // Set 9 / CP9.12 — registry + prompt selection depends on
-    // `--vuln`. Recon flows keep standard_registry + whatever
-    // system_prompt loaded (recon_v2.md by default). Vuln flows
-    // swap to vuln_registry (25 tools) and VULN_V2_PROMPT unless
-    // the operator overrode via `--system-prompt` /
-    // BASILISK_SYSTEM_PROMPT. v2 (Set 9.5) strengthens the
-    // structured-recording discipline that v1 (Set 9) treated as
-    // optional; vuln_v1.md remains in-tree for A/B comparison.
+    // Registry + prompt selection depends on `--vuln`. Recon flows keep
+    // standard_registry + recon_v2.md by default. Vuln flows use
+    // vuln_registry (25 tools) and VULN_V3_PROMPT unless the operator
+    // overrode via `--system-prompt` / BASILISK_SYSTEM_PROMPT.
+    //
+    // v3 (current) is the adversarial-mode mandate: drainage-only,
+    // mandatory PoC for every finding, explicit out-of-scope categories.
+    // v2 (Set 9.5) is broader-scope vulnerability hunting with
+    // structured-recording discipline; v1 (Set 9) is the original.
+    // Both kept in-tree for A/B comparison.
     let (registry, system_prompt_selected) = if flags.vuln {
         let prompt = if flags.system_prompt.is_some() {
             system_prompt
         } else {
-            basilisk_agent::VULN_V2_PROMPT.to_string()
+            basilisk_agent::VULN_V3_PROMPT.to_string()
         };
         (basilisk_agent::vuln_registry(), prompt)
     } else {
