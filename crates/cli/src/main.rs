@@ -8,7 +8,7 @@ use basilisk_logging::LogFormat;
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    bench::BenchCmd, cache::CacheArgs, knowledge::KnowledgeCmd, recon::ReconArgs,
+    bench::BenchCmd, cache::CacheArgs, doc::DocArgs, knowledge::KnowledgeCmd, recon::ReconArgs,
     session::SessionCmd,
 };
 
@@ -53,6 +53,8 @@ enum Command {
     /// targets and review scored runs.
     #[command(subcommand)]
     Bench(BenchCmd),
+    /// Serve the Basilisk documentation on localhost (default port 3000).
+    Doc(DocArgs),
 }
 
 #[tokio::main]
@@ -91,6 +93,7 @@ async fn main() -> Result<()> {
         Command::Knowledge(cmd) => commands::knowledge::run(cmd, &config).await,
         Command::Cache(args) => commands::cache::run(args).await,
         Command::Bench(cmd) => commands::bench::run(cmd, &config).await,
+        Command::Doc(args) => commands::doc::run(args).await,
     }
 }
 

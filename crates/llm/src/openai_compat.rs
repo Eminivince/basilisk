@@ -296,6 +296,11 @@ struct WireRequest<'a> {
     /// Without this, streaming responses report zero tokens.
     #[serde(skip_serializing_if = "Option::is_none")]
     stream_options: Option<serde_json::Value>,
+    /// OpenRouter automatic prompt caching — routes subsequent requests to
+    /// the same provider endpoint to maximise cache hit rate.  Only sent
+    /// when the caller opts in via `CompletionRequest::cache_system_prompt`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -377,6 +382,12 @@ fn build_request_body(model: &str, req: &CompletionRequest, stream: bool) -> ser
         None
     };
 
+    let cache_control = if req.cache_system_prompt {
+        Some(serde_json::json!({ "type": "ephemeral" }))
+    } else {
+        None
+    };
+
     let wire = WireRequest {
         model,
         messages,
@@ -387,6 +398,7 @@ fn build_request_body(model: &str, req: &CompletionRequest, stream: bool) -> ser
         stop: req.stop_sequences.clone(),
         stream,
         stream_options,
+        cache_control,
     };
     serde_json::to_value(&wire).expect("WireRequest serialises")
 }
@@ -521,11 +533,20 @@ struct WireFunctionOut {
 }
 
 #[derive(Deserialize, Default)]
+struct WirePromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: u32,
+}
+
+#[derive(Deserialize, Default)]
 struct WireUsage {
     #[serde(default)]
     prompt_tokens: u32,
     #[serde(default)]
     completion_tokens: u32,
+    /// OpenRouter cache-read accounting — nested under `prompt_tokens_details`.
+    #[serde(default)]
+    prompt_tokens_details: Option<WirePromptTokensDetails>,
 }
 
 fn parse_response(wire: WireResponse) -> Result<CompletionResponse, LlmError> {
@@ -576,7 +597,11 @@ fn parse_response(wire: WireResponse) -> Result<CompletionResponse, LlmError> {
         usage: TokenUsage {
             input_tokens: wire.usage.prompt_tokens,
             output_tokens: wire.usage.completion_tokens,
-            cache_read_input_tokens: None,
+            cache_read_input_tokens: wire
+                .usage
+                .prompt_tokens_details
+                .map(|d| d.cached_tokens)
+                .filter(|&n| n > 0),
             cache_creation_input_tokens: None,
         },
         model,
@@ -718,7 +743,7 @@ fn flush_terminal(
         usage: Some(TokenUsage {
             input_tokens: acc.usage.input_tokens,
             output_tokens: acc.usage.output_tokens,
-            cache_read_input_tokens: None,
+            cache_read_input_tokens: acc.usage.cache_read_input_tokens,
             cache_creation_input_tokens: None,
         }),
     }));
@@ -767,6 +792,15 @@ fn handle_frame(
             .and_then(serde_json::Value::as_u64)
         {
             acc.usage.output_tokens = u32::try_from(comp).unwrap_or(u32::MAX);
+        }
+        if let Some(cached) = usage
+            .pointer("/prompt_tokens_details/cached_tokens")
+            .and_then(serde_json::Value::as_u64)
+        {
+            if cached > 0 {
+                acc.usage.cache_read_input_tokens =
+                    Some(u32::try_from(cached).unwrap_or(u32::MAX));
+            }
         }
     }
 
@@ -1028,6 +1062,60 @@ mod tests {
         let streamed = build_request_body("gpt-4o", &sample_request(), true);
         assert_eq!(streamed["stream"], true);
         assert_eq!(streamed["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn request_body_emits_cache_control_when_flag_set() {
+        let mut req = sample_request();
+        req.cache_system_prompt = true;
+        let body = build_request_body("anthropic/claude-opus-4-7", &req, false);
+        assert_eq!(body["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn request_body_omits_cache_control_when_flag_unset() {
+        let body = build_request_body("gpt-4o", &sample_request(), false);
+        assert!(body.get("cache_control").is_none());
+    }
+
+    #[test]
+    fn parse_response_surfaces_cached_tokens_from_prompt_tokens_details() {
+        let raw = serde_json::json!({
+            "model": "anthropic/claude-opus-4-7",
+            "choices": [{
+                "message": { "content": "cached hit", "tool_calls": [] },
+                "finish_reason": "stop",
+            }],
+            "usage": {
+                "prompt_tokens": 5000,
+                "completion_tokens": 20,
+                "prompt_tokens_details": { "cached_tokens": 4800 }
+            }
+        });
+        let wire: WireResponse = serde_json::from_value(raw).unwrap();
+        let parsed = parse_response(wire).unwrap();
+        assert_eq!(parsed.usage.input_tokens, 5000);
+        assert_eq!(parsed.usage.cache_read_input_tokens, Some(4800));
+        assert!(parsed.usage.cache_creation_input_tokens.is_none());
+    }
+
+    #[test]
+    fn parse_response_ignores_zero_cached_tokens() {
+        let raw = serde_json::json!({
+            "model": "gpt-4o",
+            "choices": [{
+                "message": { "content": "cold", "tool_calls": [] },
+                "finish_reason": "stop",
+            }],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 10,
+                "prompt_tokens_details": { "cached_tokens": 0 }
+            }
+        });
+        let wire: WireResponse = serde_json::from_value(raw).unwrap();
+        let parsed = parse_response(wire).unwrap();
+        assert!(parsed.usage.cache_read_input_tokens.is_none());
     }
 
     #[test]
