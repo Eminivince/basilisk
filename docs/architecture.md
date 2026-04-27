@@ -60,7 +60,7 @@ Every public abstraction is trait-based, which keeps each layer testable in isol
 ### On-chain audit
 
 ```
-audit recon 0x...
+basilisk recon 0x...
   → core::detect() → Target::OnChain
   → onchain::resolve_system()
       → rpc: fetch bytecode
@@ -77,7 +77,7 @@ audit recon 0x...
 ### Knowledge base search
 
 ```
-audit knowledge search "..."
+basilisk knowledge search "..."
   → embeddings: embed query (Voyage/OpenAI/Ollama)
   → vector: cosine similarity over FileVectorStore
   → knowledge: rank + deduplicate hits

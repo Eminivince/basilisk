@@ -115,9 +115,9 @@ Five real post-exploit targets test the agent's ability to find known vulnerabil
 | Nomad Bridge | Merkle root initialisation flaw | 15,259,100 |
 
 ```bash
-audit bench run euler
-audit bench history
-audit bench compare <run-a> <run-b>
+basilisk bench run euler
+basilisk bench history
+basilisk bench compare <run-a> <run-b>
 ```
 
-Scoring uses keyword matching against expected findings. Use `audit bench review <run-id>` to manually label misses and false positives for calibration feedback.
+Scoring uses keyword matching against expected findings. Use `basilisk bench review <run-id>` to manually label misses and false positives for calibration feedback.

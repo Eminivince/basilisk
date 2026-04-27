@@ -14,7 +14,7 @@ use crate::commands::{
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "audit",
+    name = "basilisk",
     version,
     about = "Basilisk — AI-driven smart-contract auditor",
     long_about = None,

@@ -12,7 +12,7 @@ why it's deferred.
 
 ### Hardcoded recon dispatch replacement
 
-`audit recon <target>` without `--agent` still uses the deterministic Rust
+`basilisk recon <target>` without `--agent` still uses the deterministic Rust
 pipeline shipped in Sets 1–5: `detect` → `OnchainIngester::resolve_system` /
 `analyze_project` / clone-and-analyze. With `--agent` the same targets flow
 through the LLM-driven loop. Unlock: delete the deterministic dispatch, make
@@ -128,7 +128,7 @@ seen. Add when we first see an RPM-class 429 in a real run.
 
 ### Reembed cost-warning UX
 
-`audit knowledge reembed <collection>` is the documented migration
+`basilisk knowledge reembed <collection>` is the documented migration
 path when the operator swaps embedding providers (different
 dimensionality, different model). Unlock: the command itself plus a
 pre-flight estimator that prints record count × tokens × target-
@@ -163,7 +163,7 @@ writing a synthetic test that exercises the transitions doesn't
 validate the same thing — we want to see real reasoning drive
 the lifecycle.
 
-### `audit session resume` live test
+### `basilisk session resume` live test
 
 The resume path is wired end-to-end and covered by unit tests
 (`SessionStore::mark_resumed`, `AgentRunner::resume_with_observer`),

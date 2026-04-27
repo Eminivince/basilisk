@@ -1,9 +1,9 @@
 # Commands Reference
 
-The `audit` binary exposes six top-level subcommands.
+The `basilisk` binary exposes six top-level subcommands.
 
 ```
-audit [--json-logs | --pretty-logs] <COMMAND>
+basilisk [--json-logs | --pretty-logs] <COMMAND>
 
 COMMANDS:
   recon       Audit a target via the LLM agent
@@ -16,12 +16,12 @@ COMMANDS:
 
 ---
 
-## `audit recon`
+## `basilisk recon`
 
 Start an agent session against a target.
 
 ```
-audit recon <TARGET> [OPTIONS]
+basilisk recon <TARGET> [OPTIONS]
 
 ARGS:
   <TARGET>    On-chain address, GitHub URL, or local path
@@ -41,26 +41,26 @@ OPTIONS:
 
 ```bash
 # Audit a deployed contract on Ethereum mainnet
-audit recon 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --chain ethereum
+basilisk recon 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --chain ethereum
 
 # Deep vulnerability hunt on a GitHub repo
-audit recon https://github.com/compound-finance/compound-protocol --vuln
+basilisk recon https://github.com/compound-finance/compound-protocol --vuln
 
 # Use a cheaper model with a tighter budget
-audit recon ./my-protocol --model claude-sonnet-4-6 --max-cost 200
+basilisk recon ./my-protocol --model claude-sonnet-4-6 --max-cost 200
 
 # Target a specific chain
-audit recon 0x... --chain arbitrum
+basilisk recon 0x... --chain arbitrum
 ```
 
 ---
 
-## `audit session`
+## `basilisk session`
 
 Manage persisted agent sessions.
 
 ```
-audit session <COMMAND>
+basilisk session <COMMAND>
 
 COMMANDS:
   list                    List recent sessions (newest first)
@@ -70,51 +70,52 @@ COMMANDS:
   scratchpad <CMD>        Inspect agent working memory
 ```
 
-### `audit session list`
+### `basilisk session list`
 
 ```bash
-audit session list
+basilisk session list
 # Shows: id, target, mode, status, turns, cost, timestamp
 ```
 
-### `audit session show`
+### `basilisk session show`
 
 ```bash
-audit session show <id>
-audit session show <id> --report-only    # just the final report
-audit session show <id> --format json    # machine-readable
+basilisk session show <id>
+basilisk session show <id> --report-only    # just the final report
+basilisk session show <id> --format json    # machine-readable
 ```
 
-### `audit session resume`
+### `basilisk session resume`
 
 Resumes an interrupted session from where it left off. The system prompt must match (same mode). Budget is reset relative to what was consumed.
 
 ```bash
-audit session resume <id>
+basilisk session resume <id>
 ```
 
-### `audit session scratchpad`
+### `basilisk session scratchpad`
 
 The agent maintains a working scratchpad — a structured document it updates across turns.
 
 ```bash
-audit session scratchpad show <id>        # full scratchpad
-audit session scratchpad summary <id>     # compact summary
-audit session scratchpad export <id>      # JSON export
-audit session scratchpad delete <id>      # wipe (cannot undo)
+basilisk session scratchpad show <id>        # full scratchpad
+basilisk session scratchpad summary <id>     # compact summary
+basilisk session scratchpad export <id>      # JSON export
+basilisk session scratchpad delete <id>      # wipe (cannot undo)
 ```
 
 ---
 
-## `audit knowledge`
+## `basilisk knowledge`
 
-Manage the semantic knowledge base.
+Manage the semantic knowledge base — ingest vulnerability corpora, index protocol docs, search findings, and curate agent output.
 
 ```
-audit knowledge <COMMAND>
+basilisk knowledge <COMMAND>
 
 COMMANDS:
   ingest <SOURCE>      Ingest a corpus into the KB
+  stats                Show entry counts per collection
   search <QUERY>       Natural-language KB search
   add-protocol         Index a protocol's documentation
   list-findings        List curated KB findings
@@ -124,40 +125,78 @@ COMMANDS:
   confirm <ID>         Confirm a finding as valid
 ```
 
-### Ingest sources
+### First-time setup
 
 ```bash
-audit knowledge ingest solodit        # from solodit_dump.jsonl
-audit knowledge ingest swc            # Smart Contract Weakness Classification
-audit knowledge ingest openzeppelin   # OZ security advisories
-audit knowledge ingest code4rena      # clones Code4rena findings repos
-audit knowledge ingest sherlock       # clones Sherlock audit reports
-audit knowledge ingest rekt           # from rekt.jsonl (operator-curated)
-audit knowledge ingest trailofbits    # from trailofbits.jsonl (operator-curated)
-audit knowledge ingest --all          # all sources
+# Seed the public corpus (requires VOYAGE_API_KEY or OPENAI_API_KEY for embeddings)
+basilisk knowledge ingest swc            # Smart Contract Weakness Classification (~50 entries)
+basilisk knowledge ingest openzeppelin   # OZ security advisories
+basilisk knowledge ingest code4rena      # Code4rena findings repos — needs GITHUB_TOKEN
+basilisk knowledge ingest sherlock       # Sherlock audit reports — needs GITHUB_TOKEN
+basilisk knowledge ingest --all          # all sources (+ solodit/rekt/trailofbits if dumps present)
+
+# Confirm what was indexed
+basilisk knowledge stats
+```
+
+### Ingest sources
+
+| Source | Requires | Notes |
+|---|---|---|
+| `swc` | nothing | Standard weakness taxonomy |
+| `openzeppelin` | nothing | OZ library security advisories |
+| `code4rena` | `GITHUB_TOKEN` | Clones `code-423n4/<contest>-findings` repos |
+| `sherlock` | `GITHUB_TOKEN` | Clones Sherlock audit report repos |
+| `solodit` | `~/.basilisk/knowledge/solodit_dump.jsonl` | Operator-provided JSONL dump |
+| `rekt` | `~/.basilisk/knowledge/rekt_dump.jsonl` | Operator-provided post-mortems |
+| `trailofbits` | `~/.basilisk/knowledge/tob_dump.jsonl` | Operator-provided blog writeups |
+
+```bash
+basilisk knowledge ingest code4rena --max-records 5000   # cap large corpora
 ```
 
 ### Search
 
 ```bash
-audit knowledge search "reentrancy via ERC777 callback"
-audit knowledge search "flash loan oracle manipulation" --limit 10
+basilisk knowledge search "reentrancy via ERC777 callback"
+basilisk knowledge search "flash loan oracle manipulation" --limit 10
+basilisk knowledge search "rounding error" --collection public_findings
+basilisk knowledge search "aave liquidation flow" --collection protocol_docs
 ```
 
-### Add a protocol
+### Add protocol documentation
+
+Index engagement-specific docs before auditing a target so the agent can retrieve them with `search_protocol_docs`.
 
 ```bash
-audit knowledge add-protocol uniswap-v3 --github https://github.com/Uniswap/v3-core
-audit knowledge add-protocol aave-v3 --pdf ./aave-v3-technical-paper.pdf
-audit knowledge add-protocol curve --url https://docs.curve.fi
+# From a GitHub repo (indexes .md and .sol files)
+basilisk knowledge add-protocol uniswap-v3 --github https://github.com/Uniswap/v3-core
+basilisk knowledge add-protocol aave-v3 --github aave/aave-v3-core:docs   # subdirectory
+
+# From a PDF whitepaper
+basilisk knowledge add-protocol aave-v3 --pdf ./aave-v3-technical-paper.pdf
+
+# From a documentation URL
+basilisk knowledge add-protocol curve --url https://docs.curve.fi
+basilisk knowledge add-protocol compound --url https://docs.compound.finance
+```
+
+### Manage findings
+
+```bash
+basilisk knowledge list-findings
+basilisk knowledge show-finding <id>
+basilisk knowledge correct <id>  --reason "unreachable — guard catches it"
+basilisk knowledge dismiss <id>  --reason "false positive — invariant maintained by caller"
+basilisk knowledge confirm <id>
 ```
 
 ---
 
-## `audit cache`
+## `basilisk cache`
 
 ```
-audit cache <COMMAND>
+basilisk cache <COMMAND>
 
 COMMANDS:
   stats           Entry counts and byte totals per namespace
@@ -166,22 +205,22 @@ COMMANDS:
 ```
 
 ```bash
-audit cache stats
-audit cache repos list
-audit cache repos clear
-audit cache clear
+basilisk cache stats
+basilisk cache repos list
+basilisk cache repos clear
+basilisk cache clear
 ```
 
 Cache lives at `~/.cache/basilisk/` (RPC/explorer) and `~/.basilisk/repos/` (Git).
 
 ---
 
-## `audit bench`
+## `basilisk bench`
 
 The benchmark harness runs the auditor against five real post-exploit protocols and scores findings.
 
 ```
-audit bench <COMMAND>
+basilisk bench <COMMAND>
 
 COMMANDS:
   list             Show the 5 calibration targets
@@ -196,20 +235,20 @@ COMMANDS:
 Calibration targets: **Euler Finance**, **Visor Finance**, **Cream Finance**, **Beanstalk**, **Nomad Bridge** — each pinned to the block before the exploit.
 
 ```bash
-audit bench list
-audit bench run euler
-audit bench history
-audit bench compare <run-a-id> <run-b-id>
+basilisk bench list
+basilisk bench run euler
+basilisk bench history
+basilisk bench compare <run-a-id> <run-b-id>
 ```
 
 ---
 
-## `audit doc`
+## `basilisk doc`
 
 Serve this documentation locally.
 
 ```
-audit doc [OPTIONS]
+basilisk doc [OPTIONS]
 
 OPTIONS:
   --port <PORT>    Port to listen on [default: 3000]
@@ -217,9 +256,9 @@ OPTIONS:
 ```
 
 ```bash
-audit doc                   # serve at http://localhost:3000
-audit doc --port 8080       # custom port
-audit doc --open            # auto-open browser
+basilisk doc                   # serve at http://localhost:3000
+basilisk doc --port 8080       # custom port
+basilisk doc --open            # auto-open browser
 ```
 
 Press `Ctrl-C` to stop the server.

@@ -6,13 +6,13 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "The `audit` command-line binary for the Basilisk auditor."
+description = "The `basilisk` command-line binary for the Basilisk auditor."
 
 [lints]
 workspace = true
 
 [[bin]]
-name = "audit"
+name = "basilisk"
 path = "src/main.rs"
 
 [dependencies]

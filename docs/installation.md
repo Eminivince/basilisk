@@ -24,7 +24,7 @@ Verify: `forge --version && anvil --version`
 git clone https://github.com/eminivance/basilisk
 cd basilisk
 
-# Build and install the `audit` binary
+# Build and install the `basilisk` binary
 cargo install --path crates/cli
 
 # Verify
@@ -78,10 +78,10 @@ VOYAGE_API_KEY=...          # for knowledge base search
 audit --help
 
 # Should list 5 benchmark targets
-audit bench list
+basilisk bench list
 
 # Should print cache stats (zero on first run)
-audit cache stats
+basilisk cache stats
 ```
 
 ## Updating

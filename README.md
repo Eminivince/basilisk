@@ -12,7 +12,7 @@ records suspicions and limitations to a queryable knowledge base. See
 `reports/SET-9.md` and `reports/wave-launcher-trial.md` for honest
 calibration data.
 
-## What it does today
+## What it does
 
 ### On-chain resolution
 
@@ -49,22 +49,6 @@ Ethereum, Sepolia, Arbitrum, Arbitrum Sepolia, Base, Base Sepolia,
 Optimism, Optimism Sepolia, Polygon, BNB, Avalanche. Other EVM chains are
 reachable via `RPC_URL_<CHAIN>` overrides.
 
-## Roadmap
-
-- **Phase 3: the agent (in progress).** LLM-driven recon via
-  `audit recon <target>` is wired end-to-end: model-agnostic
-  backend (Anthropic shipped), eleven tool definitions covering the
-  Phase 1–2 ingestion surface, SQLite-persisted sessions, streamed
-  CLI output, and budget enforcement. Vulnerability reasoning,
-  RAG-assisted grounding, and PoC synthesis land in later phases.
-- **Phase 4: knowledge base.** Retrieval-augmented grounding over audit
-  corpora (Solodit, Code4rena, Sherlock, SWC registry) and per-engagement
-  context (protocol docs, whitepapers). Every finding retrieves its
-  precedent.
-- **Phase 5: proof-of-concept synthesis.** Findings get proven. The agent
-  writes Foundry fork tests that reproduce exploits against mainnet state.
-  If the test fails, the finding is demoted.
-
 Everything executes in forked simulation — Basilisk never broadcasts
 transactions to real networks.
 
@@ -84,21 +68,27 @@ cp .env.example .env
 # on-chain, and GITHUB_TOKEN for GitHub rate-limit headroom
 
 # run
-./target/release/audit recon 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --chain ethereum
-./target/release/audit recon https://github.com/foundry-rs/forge-template
-./target/release/audit recon ./path/to/foundry-project
+./target/release/basilisk recon 0xdeaDbeefdeadbeefbeefbeefbeefdeadbeef --chain ethereum
+./target/release/basilisk recon https://github.com/foundry-rs/forge-template
+./target/release/basilisk recon ./path/to/foundry-project
 ```
 
-To install `audit` as a system binary: `cargo install --path crates/cli`.
+To install `basilisk` as a system binary: `cargo install --path crates/cli`.
+
+Browse the built-in documentation at any time:
+
+```bash
+basilisk doc --open        # serves http://localhost:3000 and opens your browser
+```
 
 ## Configuration
 
 | Variable              | What it enables                                                                                                        | Without it                                                    |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `ANTHROPIC_API_KEY`   | Default LLM provider for `audit recon <target>`                                                                | Pick another `--provider` or fall back to deterministic recon |
+| `ANTHROPIC_API_KEY`   | Default LLM provider for `basilisk recon <target>`                                                                | Pick another `--provider` or fall back to deterministic recon |
 | `OPENROUTER_API_KEY`  | Agent routing via `--provider openrouter` (any Claude/GPT/Gemini/Llama model)                                          | Use a different provider                                      |
 | `OPENAI_API_KEY`      | Agent routing via `--provider openai`; fallback key for `--provider openai-compat`; also used as an embedding provider | Use a different provider or supply `--llm-api-key-env`        |
-| `VOYAGE_API_KEY`      | Primary embedding provider for `audit knowledge` (voyage-code-3)                                                       | Falls back to OpenAI or local Ollama                          |
+| `VOYAGE_API_KEY`      | Primary embedding provider for `basilisk knowledge` (voyage-code-3)                                                       | Falls back to OpenAI or local Ollama                          |
 | `OLLAMA_HOST`         | Local Ollama endpoint for embeddings (`nomic-embed-text`, fully offline)                                               | Defaults to `http://localhost:11434`                          |
 | `EMBEDDINGS_PROVIDER` | Explicit `voyage`\|`openai`\|`ollama` override                                                                         | Picks the first configured provider                           |
 | `ALCHEMY_API_KEY`     | Primary RPC for supported chains                                                                                       | Falls back to `RPC_URL_<CHAIN>` or public RPC                 |
@@ -118,7 +108,7 @@ self-hosted node resolves this — point `RPC_URL_ETHEREUM` at it.
 ### On-chain
 
 ```console
-$ audit recon 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2 --chain ethereum
+$ basilisk recon 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2 --chain ethereum
 
 System resolved from 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2 on ethereum (id 1)
   Contracts: 2 resolved, 0 failed
@@ -163,7 +153,7 @@ caps `eth_getLogs` queries — see [Configuration](#configuration).
 ### Source, from GitHub
 
 ```console
-$ audit recon https://github.com/foundry-rs/forge-template
+$ basilisk recon https://github.com/foundry-rs/forge-template
 
 Project at ~/.basilisk/repos/foundry-rs/forge-template/f5db6aeeff588c8a789b6f7da83313950fd97178
   kind: foundry
@@ -187,26 +177,26 @@ Basilisk if you want full resolution.
 Inspect or prune the repo cache:
 
 ```console
-$ audit cache repos stats
+$ basilisk cache repos stats
 repo cache: ~/.basilisk/repos
 repos: 1
 total: 1.2 MB
 oldest: 3m ago
 newest: 3m ago
 
-$ audit cache repos list
+$ basilisk cache repos list
 owner/repo                               sha        depth    cloned
 ---------------------------------------- ---------- -------- ----------------
 foundry-rs/forge-template                f5db6aee   shallow  3m ago
 
-$ audit cache repos clear --owner foundry-rs
+$ basilisk cache repos clear --owner foundry-rs
 cleared foundry-rs/*: 1.2 MB freed
 ```
 
 ### Source, from local path
 
 ```console
-$ audit recon crates/project/tests/fixtures/foundry-minimal
+$ basilisk recon crates/project/tests/fixtures/foundry-minimal
 
 Project at crates/project/tests/fixtures/foundry-minimal
   kind: foundry
@@ -226,16 +216,12 @@ clone — same layout detector, same config parsers, same import graph.
 Points at any directory containing a `foundry.toml`, `hardhat.config.*`, or
 `truffle-config.js`.
 
-### `audit recon` — LLM-driven auditor
+### `basilisk recon` — LLM-driven auditor
 
-`audit recon <target>` runs an LLM-driven tool-use loop against the
+`basilisk recon <target>` runs an LLM-driven tool-use loop against the
 target. Recon-mode by default; pass `--vuln` to switch into
 vulnerability-hunting mode (Set 9.5).
 
-> **Set 9.5 trust moment.** The deterministic ingestion path that
-> shipped in Sets 1–5 has been removed. `audit recon` is agent-only
-> now. Verified end-to-end across Sets 6–9.5; details in
-> `reports/SET-9.md` and `reports/wave-launcher-trial.md`.
 
 The agent calls a registry of tools — 14 in recon mode, **25 in
 `--vuln` mode** (recon tools + knowledge-base retrieval + analytical
@@ -244,7 +230,7 @@ self-critique tools that drive structured-recording discipline).
 Output is a markdown brief in the agent's voice.
 
 ```console
-$ audit recon 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 \
+$ basilisk recon 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 \
     --max-turns 20 \
     --max-cost 100
 
@@ -277,12 +263,12 @@ Every session is persisted to `~/.basilisk/sessions.db`. Inspect, resume,
 or delete via:
 
 ```bash
-audit session list
-audit session show <id>
-audit session show <id> --report-only      # just the markdown
-audit session show <id> --format json      # machine-readable full transcript
-audit session resume <id>                  # continue an interrupted run
-audit session delete <id> --yes            # remove from the DB
+basilisk session list
+basilisk session show <id>
+basilisk session show <id> --report-only      # just the markdown
+basilisk session show <id> --format json      # machine-readable full transcript
+basilisk session resume <id>                  # continue an interrupted run
+basilisk session delete <id> --yes            # remove from the DB
 ```
 
 **Budgets.** The agent will stop cleanly the moment any of the four
@@ -309,28 +295,28 @@ Examples:
 
 ```bash
 # OpenRouter, routed to Claude Opus under the hood:
-audit recon <target> \
+basilisk recon <target> \
   --provider openrouter \
   --model anthropic/claude-opus-4-7
 
 # Local Ollama running Llama 3.1 70B:
-audit recon <target> \
+basilisk recon <target> \
   --provider ollama \
   --model llama3.1:70b
 
 # llama.cpp server on a custom port:
-audit recon <target> \
+basilisk recon <target> \
   --provider openai-compat \
   --llm-base-url http://localhost:8080/v1 \
   --model qwen2.5-coder-32b
 
 # OpenAI GPT-4o:
-audit recon <target> \
+basilisk recon <target> \
   --provider openai --model gpt-4o
 ```
 
 The transcript, cost accounting, and session persistence are provider-
-neutral — `audit session list` / `show <id>` work identically across
+neutral — `basilisk session list` / `show <id>` work identically across
 providers. The session row records `model = "<provider>/<model>"` so
 a mixed DB remains attributable.
 
@@ -347,20 +333,18 @@ BASILISK_MAX_COST_CENTS=300
 
 ```bash
 # now this just works:
-audit recon <target>
+basilisk recon <target>
 ```
 
-CLI flags override env vars, so one-off tweaks stay cheap: `audit recon
+CLI flags override env vars, so one-off tweaks stay cheap: `basilisk recon
 <target> --model openai/gpt-4o`. The full list of `BASILISK_*`
 variables is documented in `.env.example`.
 
 #### Vulnerability-hunt mode (`--vuln`)
 
-Set 9 added a `--vuln` flag that swaps the agent's behavior wholesale.
-Set 9.5 hardened it.
 
 ```bash
-audit recon 0xB9873b482d51b8b0f989DCD6CCf1D91520092b95 \
+basilisk recon 0xB9873b482d51b8b0f989DCD6CCf1D91520092b95 \
   --chain ethereum \
   --vuln \
   --provider openrouter \
@@ -403,20 +387,20 @@ cat ~/.basilisk/feedback/self_critiques.jsonl # per-session reflections
 prints a summary against the recorded Opus baseline (Set 9 Run C,
 $25.12 / 9 min) for cost-vs-quality calibration.
 
-#### Benchmark — `audit bench`
+#### Benchmark — `basilisk bench`
 
 ```bash
-audit bench list                            # 5 calibration targets
-audit bench show euler-2023                 # full target dossier
-audit bench run visor-2021                  # spawn a vuln session, score it
-audit bench run                             # all 5 sequentially
-audit bench history                         # newest-first run log
-audit bench score <run-id>                  # re-score against current expectations
-audit bench compare <run-a> <run-b>         # side-by-side diff
-audit bench review <run-id>                 # interactively label misses + false positives
+basilisk bench list                            # 5 calibration targets
+basilisk bench show euler-2023                 # full target dossier
+basilisk bench run visor-2021                  # spawn a vuln session, score it
+basilisk bench run                             # all 5 sequentially
+basilisk bench history                         # newest-first run log
+basilisk bench score <run-id>                  # re-score against current expectations
+basilisk bench compare <run-a> <run-b>         # side-by-side diff
+basilisk bench review <run-id>                 # interactively label misses + false positives
 ```
 
-`audit bench review` walks every miss and false positive from a recorded
+`basilisk bench review` walks every miss and false positive from a recorded
 run and asks the operator to label each — `actual_miss`,
 `scoring_failure`, `false_positive`, `wrongly_flagged`, or
 `in_scope_extra`. Verdicts persist in `bench_review_verdicts` so re-runs
@@ -434,7 +418,7 @@ exploit. Scoring is heuristic keyword matching against
 
 Local-model caveat: tool-use quality varies significantly by model.
 A 7B-class model rarely completes a recon brief without supervision.
-The 70B-class Llamas / Qwens work well in our testing.
+The 70B-class Llamas / Qwens may work for small trivial contracts with little dependency graph. But the Opus 4.7 is near perfect for now.
 
 **Live tests.** Three `#[ignore]`-d tests (`crates/agent/tests/agent_live.rs`)
 exercise the full path against real targets (`forge-template`, USDC,
@@ -449,7 +433,7 @@ cargo test -p basilisk-agent --test agent_live -- --ignored --nocapture
 Set 7 adds a persistent, user-owned knowledge substrate under
 `~/.basilisk/knowledge/`. The agent gains four retrieval tools
 (`search_knowledge_base`, `search_similar_code`, `search_protocol_docs`,
-`record_finding`); the operator gets `audit knowledge` to curate the
+`record_finding`); the operator gets `basilisk knowledge` to curate the
 corpus by hand.
 
 Three layers are supported:
@@ -463,33 +447,33 @@ Three layers are supported:
 
 ```console
 # what's stored, where, and which provider embedded it:
-$ audit knowledge stats
+$ basilisk knowledge stats
 
 # seed the external corpus:
-$ audit knowledge ingest solodit --max-records 1000
-$ audit knowledge ingest swc
-$ audit knowledge ingest openzeppelin
-$ audit knowledge ingest code4rena       # set 9.6: github-based contest archive
-$ audit knowledge ingest sherlock        # set 9.6: github-based audit reports
-$ audit knowledge ingest rekt            # set 9.6: operator-curated post-mortems
-$ audit knowledge ingest trailofbits     # set 9.6: operator-curated security writeups
-$ audit knowledge ingest --all
+$ basilisk knowledge ingest solodit --max-records 1000
+$ basilisk knowledge ingest swc
+$ basilisk knowledge ingest openzeppelin
+$ basilisk knowledge ingest code4rena       # set 9.6: github-based contest archive
+$ basilisk knowledge ingest sherlock        # set 9.6: github-based audit reports
+$ basilisk knowledge ingest rekt            # set 9.6: operator-curated post-mortems
+$ basilisk knowledge ingest trailofbits     # set 9.6: operator-curated security writeups
+$ basilisk knowledge ingest --all
 
 # attach engagement-specific context:
-$ audit knowledge add-protocol aave-v3 --github aave/aave-v3-core:docs
-$ audit knowledge add-protocol aave-v3 --pdf ./aave-v3-whitepaper.pdf
-$ audit knowledge add-protocol aave-v3 --url https://docs.aave.com/developers/
+$ basilisk knowledge add-protocol aave-v3 --github aave/aave-v3-core:docs
+$ basilisk knowledge add-protocol aave-v3 --pdf ./aave-v3-whitepaper.pdf
+$ basilisk knowledge add-protocol aave-v3 --url https://docs.aave.com/developers/
 
 # natural-language retrieval:
-$ audit knowledge search "reentrancy via erc777 callback"
-$ audit knowledge search "rounding direction" --collection public_findings
+$ basilisk knowledge search "reentrancy via erc777 callback"
+$ basilisk knowledge search "rounding direction" --collection public_findings
 
 # findings memory — the agent writes, the operator curates:
-$ audit knowledge list-findings
-$ audit knowledge show-finding <id>
-$ audit knowledge correct <id>  --reason "actually unreachable on mainnet — liquidity guard catches it"
-$ audit knowledge dismiss <id>  --reason "false positive — invariant is maintained by the caller"
-$ audit knowledge confirm <id>
+$ basilisk knowledge list-findings
+$ basilisk knowledge show-finding <id>
+$ basilisk knowledge correct <id>  --reason "actually unreachable on mainnet — liquidity guard catches it"
+$ basilisk knowledge dismiss <id>  --reason "false positive — invariant is maintained by the caller"
+$ basilisk knowledge confirm <id>
 ```
 
 Corrections are stored as sibling rows in the `user_findings` collection
@@ -533,7 +517,7 @@ than scraping live. See the fixture shape in
 
 Changing providers changes the vector dimension. Each collection carries
 a `schema_version` + `embedding_dim` in its metadata; mismatched writes
-are refused with a pointer to `audit knowledge reembed <collection>`
+are refused with a pointer to `basilisk knowledge reembed <collection>`
 (landing in a follow-up set).
 
 **Interim persistence.** The shipping store is a JSON file at
@@ -589,17 +573,17 @@ corresponding API keys in `.env`.
 file; render with:
 
 ```bash
-audit recon 0x87870... --chain ethereum --dot /tmp/aave.dot
+basilisk recon 0x87870... --chain ethereum --dot /tmp/aave.dot
 dot -Tpng /tmp/aave.dot -o /tmp/aave.png
 ```
 
 Install graphviz via `brew install graphviz` (macOS) or
 `apt install graphviz` (Debian/Ubuntu).
 
-**Caches.** `audit cache stats` lists the RPC / explorer / GitHub-API
-namespaces with entry counts and byte totals. `audit cache repos stats`
-does the same for cloned repos. `audit cache clear` and
-`audit cache repos clear` reclaim space. Cache roots:
+**Caches.** `basilisk cache stats` lists the RPC / explorer / GitHub-API
+namespaces with entry counts and byte totals. `basilisk cache repos stats`
+does the same for cloned repos. `basilisk cache clear` and
+`basilisk cache repos clear` reclaim space. Cache roots:
 
 - KV caches: `dirs::cache_dir()/basilisk/` —
   `~/.cache/basilisk/` on Linux, `~/Library/Caches/basilisk/` on macOS.

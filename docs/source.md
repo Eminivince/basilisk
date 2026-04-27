@@ -91,7 +91,7 @@ All GitHub responses are cached for 1 hour.
 ## Source → agent flow
 
 ```text
-audit recon https://github.com/protocol/contracts
+basilisk recon https://github.com/protocol/contracts
 
   1. fetch_github_repo(url)
        → GitHub API: resolve HEAD → commit SHA

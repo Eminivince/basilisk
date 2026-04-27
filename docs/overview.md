@@ -30,16 +30,16 @@ Given a target — an on-chain address, a GitHub repository URL, or a local path
 cargo install --path crates/cli
 
 # Recon mode — fast protocol overview
-audit recon 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --chain ethereum
+basilisk recon 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --chain ethereum
 
 # Vulnerability mode — deep security analysis
-audit recon https://github.com/compound-finance/compound-protocol --vuln
+basilisk recon https://github.com/compound-finance/compound-protocol --vuln
 
 # Search the knowledge base
-audit knowledge search "reentrancy via callback"
+basilisk knowledge search "reentrancy via callback"
 
 # List past sessions
-audit session list
+basilisk session list
 ```
 
 ## Operating modes
