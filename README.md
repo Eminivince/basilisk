@@ -485,8 +485,64 @@ so the next run benefits from the human verdict without any separate
 **Solodit ingester.** Solodit puts content behind Cloudflare, so the
 ingester reads a user-supplied JSONL dump at
 `~/.basilisk/knowledge/solodit_dump.jsonl` (one finding per line) rather
-than scraping live. See the fixture shape in
-`crates/ingest/tests/fixtures/solodit/`.
+than scraping live.
+
+#### Using your Solodit dump
+
+The ingester accepts two JSONL shapes on the same file — it auto-detects
+per line, so mixed files are fine.
+
+**Shape 1 — native Solodit export** (`id`, `title`, `body` required;
+everything else optional):
+
+```json
+{"id":"sol-1","title":"[H-01] Reentrancy in withdraw","body":"## Impact\nAttackers can drain funds...","severity":"high","category":"reentrancy","project":"aave-v3","auditor":"Trail of Bits","report_url":"https://...","finding_url":"https://...","date":"2024-06-01"}
+{"id":"sol-2","title":"[M-02] Price oracle manipulation","body":"## Vulnerability\n...","severity":"medium","project":"compound"}
+```
+
+**Shape 2 — OpenAI fine-tuning / chat export** (the format most
+community scrape-and-share tools produce):
+
+```json
+{"messages":[{"role":"system","content":"You are a smart contract auditor."},{"role":"user","content":"Analyze the following vulnerability report: [H-01] Reentrancy in withdraw"},{"role":"assistant","content":"# Lines of code\n\nhttps://...\n\n# Vulnerability details\n\n..."}]}
+```
+
+Severity is extracted automatically from the `[H-01]` / `[M-02]` /
+`[L-03]` bracket tag in the title. Ids are deterministic content
+hashes, so re-ingesting the same file is a no-op upsert.
+
+**Converting from other formats.** If your dump is in a different shape,
+`jq` can normalize it. Example — converting a flat CSV-exported JSON
+array into the native JSONL format:
+
+```bash
+# Input: a JSON array at solodit_export.json
+# [{"id":1,"title":"...","description":"...","risk":"High"}, ...]
+jq -c '.[] | {
+  id: ("sol-" + (.id | tostring)),
+  title: .title,
+  body: .description,
+  severity: (.risk | ascii_downcase),
+  project: .project_name,
+  date: .created_at
+}' solodit_export.json > solodit_dump.jsonl
+```
+
+Once your file is ready:
+
+```bash
+mkdir -p ~/.basilisk/knowledge
+cp solodit_dump.jsonl ~/.basilisk/knowledge/solodit_dump.jsonl
+basilisk knowledge ingest solodit
+
+# Optionally cap the first run to test the pipeline:
+basilisk knowledge ingest solodit --max-records 500
+basilisk knowledge search "reentrancy via ERC777 callback"
+```
+
+Ingest is incremental — re-running skips already-indexed lines using a
+file-position cursor, so you can append new findings and run again
+without re-embedding the whole corpus.
 
 **Set 9.6 ingesters.** Four additional sources joined the corpus:
 

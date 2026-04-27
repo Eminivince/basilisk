@@ -104,7 +104,7 @@ scale (thousands of records search in milliseconds from JSON). Revisit
 when a single operator's corpus crosses ~50k records or when we need
 concurrent cross-process reads, whichever comes first.
 
-### Additional corpus ingesters (Set 7.5)
+### Additional corpus ingesters
 
 Set 7 shipped three external ingesters: Solodit, SWC registry,
 OpenZeppelin advisories. Four more — Code4rena, Sherlock, rekt.news,
@@ -175,14 +175,3 @@ three existing live tests already prove the full-session path, and
 resume's delta is only the history-rehydration code which unit tests
 cover. Add opportunistically when we have a reproducible
 interruption scenario worth replaying.
-
-## Completed deferrals
-
-Items that used to be in this file and have since shipped. Short one-line
-entries for each, with the instruction set that delivered them.
-
-- **Pricing-table coverage for non-Anthropic models** — Set 6.5. Prefix-aware
-  lookup for `openrouter/...`, `openai/...`, GPT-5 / GPT-4o family, and
-  explicit zero-cost entries for local providers (`ollama/*`, `llama.cpp/*`,
-  `vllm/*`, `lmstudio/*`). Unknown models now emit a one-shot warning instead
-  of silently disabling `--max-cost`.
