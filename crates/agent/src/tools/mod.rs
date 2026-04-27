@@ -156,22 +156,11 @@ pub fn vuln_registry() -> ToolRegistry {
     reg
 }
 
-/// Embedded vuln-reasoning system prompt — `vuln_v3.md`, current
-/// default. Adversarial-mode mandate: the agent's only goal is to
-/// find bugs that let an unauthorised, unprivileged third party
-/// drain value from the target. Out-of-scope categories (permanent
-/// freezing, griefing, centralisation risk, code quality, etc.) are
-/// explicitly listed and dropped, not written as findings. Every
-/// finding must ship with a passing `PoC` (Foundry) that asserts
-/// `attacker-balance-up` + `victim-balance-down` + `no-privileged-role`.
-///
-/// Operators can override via `BASILISK_SYSTEM_PROMPT=<path>`; this
-/// is the compiled-in default for `--vuln` sessions.
-pub const VULN_V3_PROMPT: &str = include_str!("../prompts/vuln_v3.md");
-
-/// Set-9.5 vuln prompt. Kept for A/B comparison; not the default.
-/// Broader mandate (any vulnerability, not just drainage). Strengthens
-/// structured-recording discipline beyond [`VULN_V1_PROMPT`].
+/// Embedded vuln-reasoning system prompt — `vuln_v2.md`, current
+/// default. Broader-scope vulnerability hunting with mandatory
+/// structured-recording discipline. Operators can override via
+/// `BASILISK_SYSTEM_PROMPT=<path>`; this is the compiled-in default
+/// for `--vuln` sessions.
 pub const VULN_V2_PROMPT: &str = include_str!("../prompts/vuln_v2.md");
 
 /// Set-9 vuln prompt. Kept for A/B comparison; not the default.
@@ -238,24 +227,6 @@ mod tests {
         assert!(VULN_V2_PROMPT.contains("1+ limitations"));
     }
 
-    #[test]
-    fn vuln_v3_prompt_carries_adversarial_mandate() {
-        let words = VULN_V3_PROMPT.split_whitespace().count();
-        assert!(
-            (800..=2_500).contains(&words),
-            "vuln_v3.md outside expected length: {words} words"
-        );
-        // v3's load-bearing mandate-narrowing additions.
-        assert!(VULN_V3_PROMPT.contains("adversarial mode"));
-        assert!(VULN_V3_PROMPT.contains("drain value"));
-        assert!(VULN_V3_PROMPT.contains("No PoC, no finding"));
-        assert!(VULN_V3_PROMPT.contains("out of scope"));
-        assert!(VULN_V3_PROMPT.contains("Pre-finalisation checklist"));
-        // Specific out-of-scope categories the prompt explicitly drops.
-        assert!(VULN_V3_PROMPT.contains("Permanent freezing"));
-        assert!(VULN_V3_PROMPT.contains("Griefing"));
-        assert!(VULN_V3_PROMPT.contains("centralisation"));
-    }
 
     #[test]
     fn standard_registry_includes_finalize_report_by_canonical_name() {

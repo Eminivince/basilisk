@@ -99,7 +99,7 @@ The compact form of the scratchpad is injected into the system prompt on each tu
 System prompts are embedded in the binary at compile time:
 
 - `recon_v1.md` — classification, resolution, synthesis mandate
-- `vuln_v3.md` — adversarial-mode, drainage-only vulnerability mandate (Set 9.5)
+- `vuln_v2.md` — adversarial-mode, drainage-only vulnerability mandate (Set 9.5)
 
 The vuln prompt instructs the model to focus exclusively on vulnerabilities that could drain funds or cause protocol-level damage — no informational findings.
 
